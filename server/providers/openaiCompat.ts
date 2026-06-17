@@ -68,6 +68,7 @@ export class OpenAICompatibleProvider implements Provider {
       if (!res.ok) throw new Error(`OpenAI-compatible request failed: HTTP ${res.status}`)
       if (!res.body) throw new Error('OpenAI-compatible response had no body')
       for await (const data of parseSseData(res.body)) {
+        if (ctx.signal.aborted) break
         if (data === '[DONE]') break
         let json: unknown
         try {

@@ -89,6 +89,27 @@ describe('OpenAICompatibleProvider', () => {
     expect(result.text).toBe('part')
   })
 
+  it('breaks out of SSE loop on abort after first delta (no ghost-broadcast of second delta)', async () => {
+    const { ctx: c, deltas, controller } = ctx()
+    async function* twoEvents() {
+      yield 'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
+      yield 'data: {"choices":[{"delta":{"content":"b"}}]}\n\n'
+      yield 'data: [DONE]\n\n'
+    }
+    const fetchFn: FetchLike = async () => ({ ok: true, status: 200, body: twoEvents() })
+    const origOnDelta = c.onDelta
+    c.onDelta = (t) => {
+      origOnDelta(t)
+      // abort after the first delta so that 'b' must not be emitted
+      controller.abort()
+    }
+    const p = new OpenAICompatibleProvider({ baseUrl: 'https://api.x/v1', defaultModel: 'm', fetchFn })
+    const result = await p.send({ userText: 'hi', history: userHistory }, c)
+    // Only 'a' should have been emitted; loop must break before 'b'
+    expect(deltas).toEqual(['a'])
+    expect(result.text).toBe('a')
+  })
+
   it('omits authorization header when no apiKey', async () => {
     let headers: Record<string, string> = {}
     const fetchFn: FetchLike = async (_url, init) => {

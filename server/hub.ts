@@ -88,6 +88,16 @@ export class ChatHub {
     this.subscribers.get(chatId)?.delete(send)
   }
 
+  private evictRuntimesForConnection(connectionId: string): void {
+    for (const [chatId, rt] of this.runtimes) {
+      const chat = getChat(this.deps.db, chatId)
+      if (chat && chat.connectionId === connectionId) {
+        rt.dispose()
+        this.runtimes.delete(chatId)
+      }
+    }
+  }
+
   private getOrCreateRuntime(chatId: string): ChatRuntime {
     let rt = this.runtimes.get(chatId)
     if (rt) return rt
@@ -215,6 +225,7 @@ export class ChatHub {
           { name: msg.name, baseUrl: msg.baseUrl, apiKey: msg.apiKey, defaultModel: msg.defaultModel },
           this.deps.now(),
         )
+        this.evictRuntimesForConnection(msg.id)
         this.broadcastConnections()
         break
       }

@@ -341,6 +341,64 @@ describe('ChatHub', () => {
     expect(last.connections.some((c) => c.id === conn.id)).toBe(false)
   })
 
+  it('(17) update_connection evicts cached runtime; next user_message rebuilds with new config', async () => {
+    const db = openDb(':memory:')
+    createConnection(db, {
+      id: 'anth',
+      type: 'anthropic-api',
+      name: 'Anthropic',
+      apiKey: 'sk-old-key',
+      defaultModel: 'claude-opus-4-8',
+      now: 500,
+    })
+    const cfgs: ProviderConfig[] = []
+    let idN = 0
+    let nowN = 1000
+    const stubProvider: Provider = {
+      type: 'stub',
+      async send(_p, ctx) {
+        ctx.onDelta('ok')
+        return { text: 'ok' }
+      },
+    }
+    const hub = new ChatHub({
+      db,
+      makeProvider: (cfg) => {
+        cfgs.push(cfg)
+        return stubProvider
+      },
+      genId: () => `id-${++idN}`,
+      now: () => ++nowN,
+    })
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+
+    // Create a chat bound to the 'anth' connection
+    handle.handle(JSON.stringify({ type: 'create_chat', title: 'A', connectionId: 'anth' }))
+    const chatId = (sent.find((m) => m.type === 'chat_created') as Extract<ServerMsg, { type: 'chat_created' }>).chat.id
+
+    // First user_message: builds runtime with old apiKey
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'first' }))
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+    expect(cfgs).toHaveLength(1)
+    expect(cfgs[0]).toMatchObject({ apiKey: 'sk-old-key' })
+
+    // Update the connection with a new apiKey
+    handle.handle(JSON.stringify({ type: 'update_connection', id: 'anth', name: 'Anthropic', apiKey: 'sk-new-key', defaultModel: 'claude-opus-4-8' }))
+
+    // Clear turn_done from sent so we can wait for the second one
+    const firstDoneIdx = sent.findIndex((m) => m.type === 'turn_done')
+    sent.splice(0, firstDoneIdx + 1)
+
+    // Second user_message: runtime must be rebuilt with new apiKey
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'second' }))
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+
+    // makeProvider must have been called TWICE, second call with the NEW key
+    expect(cfgs).toHaveLength(2)
+    expect(cfgs[1]).toMatchObject({ apiKey: 'sk-new-key' })
+  })
+
   it('(9) close() removes the conn from subscribers and does NOT dispose runtimes', async () => {
     const { hub } = makeHub()
     const sentA: ServerMsg[] = []
