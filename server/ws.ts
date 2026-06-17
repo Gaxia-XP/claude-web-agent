@@ -12,6 +12,7 @@ export class ChatSession {
   private currentAbort?: AbortController
   private queue: string[] = []
   private running = false
+  private disposed = false
 
   constructor(
     private send: (m: ServerMsg) => void,
@@ -22,6 +23,7 @@ export class ChatSession {
   }
 
   handle(raw: string): void {
+    if (this.disposed) return
     const msg = parseClientMsg(raw)
     if (!msg) return
     switch (msg.type) {
@@ -34,15 +36,23 @@ export class ChatSession {
         break
       case 'interrupt':
         this.currentAbort?.abort()
+        this.permission.cancelAll('interrupted by user')
         break
     }
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.currentAbort?.abort()
+    this.permission.cancelAll('connection closed')
+    this.queue = []
   }
 
   private async drain(): Promise<void> {
     if (this.running) return
     this.running = true
     try {
-      while (this.queue.length > 0) {
+      while (this.queue.length > 0 && !this.disposed) {
         const userText = this.queue.shift() as string
         const ac = new AbortController()
         this.currentAbort = ac
@@ -68,6 +78,7 @@ export function attachWebSocketServer(httpServer: Server, makeProvider: () => Pr
     const session = new ChatSession(send, makeProvider(), { cwd: process.cwd() })
     socket.on('message', (data) => session.handle(data.toString()))
     socket.on('error', () => {})
+    socket.on('close', () => session.dispose())
   })
   return wss
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
 import { isReadOnlyTool, InteractivePermissionResolver } from './permission'
 
@@ -42,5 +42,14 @@ describe('InteractivePermissionResolver', () => {
   it('ignores responses for unknown requestId', () => {
     const r = new InteractivePermissionResolver(() => {}, () => 'x')
     expect(() => r.handleResponse('nonexistent', 'allow')).not.toThrow()
+  })
+
+  it('cancelAll settles pending promises with deny and clears the map', async () => {
+    const r = new InteractivePermissionResolver(() => {}, () => 'req1')
+    const p = r.resolve('Write', { file_path: '/a' })
+    r.cancelAll('connection closed')
+    await expect(p).resolves.toEqual({ behavior: 'deny', message: 'connection closed' })
+    // subsequent handleResponse for that id is a no-op (no throw)
+    expect(() => r.handleResponse('req1', 'allow')).not.toThrow()
   })
 })

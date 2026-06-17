@@ -1,10 +1,28 @@
 import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
+import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
 import { InteractivePermissionResolver } from './permission'
 import { FakeProvider } from './providers/fake'
 import { runTurn } from './agent'
 
+class ThrowingProvider implements Provider {
+  readonly type = 'throwing'
+  async send(_params: TurnParams, _ctx: ProviderContext): Promise<TurnResult> {
+    throw new Error('boom')
+  }
+}
+
 describe('runTurn', () => {
+  it('emits error then turn_done when provider throws', async () => {
+    const sent: ServerMsg[] = []
+    const permission = new InteractivePermissionResolver((m) => sent.push(m), () => 'req1')
+    const ac = new AbortController()
+    await runTurn(new ThrowingProvider(), { userText: 'hi' }, { send: (m) => sent.push(m), permission, signal: ac.signal })
+    const types = sent.map((m) => m.type)
+    expect(types).toContain('error')
+    expect(types[types.length - 1]).toBe('turn_done')
+  })
+
   it('wires provider callbacks into ServerMsg stream and emits turn_done', async () => {
     const sent: ServerMsg[] = []
     let id = 0

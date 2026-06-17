@@ -19,4 +19,9 @@ describe('parseClientMsg', () => {
   it('returns null for invalid JSON', () => {
     expect(parseClientMsg('{not json')).toBeNull()
   })
+
+  it('parses an interrupt message', () => {
+    const m = parseClientMsg(JSON.stringify({ type: 'interrupt' }))
+    expect(m).toEqual({ type: 'interrupt' })
+  })
 })
