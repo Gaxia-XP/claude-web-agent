@@ -106,3 +106,52 @@ describe('parseClientMsg', () => {
     expect(parseClientMsg('{not json')).toBeNull()
   })
 })
+
+describe('protocol v3 — connections', () => {
+  it('parses create_chat with connectionId + model + cwd', () => {
+    const m = parseClientMsg(
+      JSON.stringify({ type: 'create_chat', connectionId: 'c1', model: 'claude-opus-4-8', cwd: 'C:/x' }),
+    )
+    expect(m).toEqual({ type: 'create_chat', connectionId: 'c1', model: 'claude-opus-4-8', cwd: 'C:/x' })
+  })
+
+  it('parses create_chat without connectionId (omitted, not null)', () => {
+    const m = parseClientMsg(JSON.stringify({ type: 'create_chat' }))
+    expect(m).toEqual({ type: 'create_chat' })
+  })
+
+  it('parses create_connection', () => {
+    const m = parseClientMsg(
+      JSON.stringify({
+        type: 'create_connection',
+        name: 'My Anthropic',
+        providerType: 'anthropic-api',
+        apiKey: 'sk-x',
+        defaultModel: 'claude-opus-4-8',
+      }),
+    )
+    expect(m).toEqual({
+      type: 'create_connection',
+      name: 'My Anthropic',
+      providerType: 'anthropic-api',
+      apiKey: 'sk-x',
+      defaultModel: 'claude-opus-4-8',
+    })
+  })
+
+  it('rejects create_connection missing required fields', () => {
+    expect(parseClientMsg(JSON.stringify({ type: 'create_connection', name: 'x' }))).toBeNull()
+  })
+
+  it('parses update_connection with only id + apiKey', () => {
+    const m = parseClientMsg(JSON.stringify({ type: 'update_connection', id: 'c1', apiKey: 'sk-new' }))
+    expect(m).toEqual({ type: 'update_connection', id: 'c1', apiKey: 'sk-new' })
+  })
+
+  it('parses delete_connection', () => {
+    expect(parseClientMsg(JSON.stringify({ type: 'delete_connection', id: 'c1' }))).toEqual({
+      type: 'delete_connection',
+      id: 'c1',
+    })
+  })
+})
