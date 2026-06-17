@@ -1,4 +1,4 @@
-import type { ToolCall, Usage } from '../../shared/protocol'
+import type { ToolCall, Usage, StoredMessage } from '../../shared/protocol'
 import type { PermissionResolver } from '../permission'
 
 export interface ProviderContext {
@@ -14,6 +14,7 @@ export interface TurnParams {
   cwd?: string
   model?: string
   sdkSessionId?: string
+  history?: StoredMessage[]
 }
 
 export interface TurnResult {
