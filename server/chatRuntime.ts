@@ -13,6 +13,7 @@ import {
   getChatSdkSession,
   setChatSdkSession,
   appendMessage,
+  listMessages,
 } from './store'
 
 export interface RuntimeDeps {
@@ -95,6 +96,7 @@ export class ChatRuntime {
   private async runOne(userText: string): Promise<void> {
     const chat = getChat(this.deps.db, this.chatId)
     const sdkSessionId = getChatSdkSession(this.deps.db, this.chatId)
+    const history = listMessages(this.deps.db, this.chatId)
 
     const abort = new AbortController()
     this.currentAbort = abort
@@ -123,6 +125,7 @@ export class ChatRuntime {
           cwd: chat?.cwd,
           model: chat?.model ?? 'sonnet',
           sdkSessionId,
+          history,
         },
         {
           chatId: this.chatId,

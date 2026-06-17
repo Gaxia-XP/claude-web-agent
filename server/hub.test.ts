@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
-import { openDb, listChats, listMessages, getChat } from './store'
+import { openDb, listChats, listMessages, getChat, createConnection } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
+import type { Provider } from './providers/types'
+import type { ProviderConfig } from './providers/index'
 
 function makeHub() {
   const db = openDb(':memory:')
@@ -220,6 +222,45 @@ describe('ChatHub', () => {
     expect(err?.chatId).toBe(chatId)
     // No messages were persisted
     expect(listMessages(db, chatId)).toHaveLength(0)
+  })
+
+  it('(10) routes provider by the chat\'s connection.type via makeProvider(cfg)', async () => {
+    const db = openDb(':memory:')
+    createConnection(db, {
+      id: 'anth',
+      type: 'anthropic-api',
+      name: 'Anthropic',
+      apiKey: 'sk-secret',
+      defaultModel: 'claude-opus-4-8',
+      now: 500,
+    })
+    const cfgs: ProviderConfig[] = []
+    let idN = 0
+    let nowN = 1000
+    const stubProvider: Provider = {
+      type: 'stub',
+      async send(_p, ctx) {
+        ctx.onDelta('ok')
+        return { text: 'ok' }
+      },
+    }
+    const hub = new ChatHub({
+      db,
+      makeProvider: (cfg) => {
+        cfgs.push(cfg)
+        return stubProvider
+      },
+      genId: () => `id-${++idN}`,
+      now: () => ++nowN,
+    })
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(JSON.stringify({ type: 'create_chat', title: 'A', connectionId: 'anth' }))
+    const chatId = (sent.find((m) => m.type === 'chat_created') as Extract<ServerMsg, { type: 'chat_created' }>).chat.id
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'hi' }))
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+    // makeProvider received the REAL connection type + secret server-side
+    expect(cfgs[0]).toMatchObject({ type: 'anthropic-api', defaultModel: 'claude-opus-4-8', apiKey: 'sk-secret' })
   })
 
   it('(9) close() removes the conn from subscribers and does NOT dispose runtimes', async () => {
