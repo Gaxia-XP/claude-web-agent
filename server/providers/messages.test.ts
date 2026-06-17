@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { historyToChatMessages } from './messages'
 import type { StoredMessage } from '../../shared/protocol'
 
-const msg = (role: 'user' | 'assistant', blocks: StoredMessage['content'], id = role): StoredMessage => ({
+const msg = (role: 'user' | 'assistant', blocks: StoredMessage['content'], id: string = role): StoredMessage => ({
   id,
   role,
   content: blocks,
