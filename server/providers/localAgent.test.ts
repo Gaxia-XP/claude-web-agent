@@ -70,6 +70,24 @@ describe('LocalAgentProvider', () => {
     expect(calls[1].options?.resume).toBe('sess-1')
   })
 
+  it('does not embed session_id inside the streamed input message (resume option only)', async () => {
+    let capturedPrompt: AsyncIterable<unknown> | undefined
+    function recordingQuery(opts: { prompt: AsyncIterable<unknown> }) {
+      capturedPrompt = opts.prompt
+      async function* gen() {
+        yield { type: 'result', subtype: 'success', result: 'ok' }
+      }
+      return Object.assign(gen(), { interrupt: async () => {} })
+    }
+    const provider = new LocalAgentProvider(recordingQuery as never)
+    await provider.send({ userText: 'hi', sdkSessionId: 'sess-1' }, makeCtx().ctx)
+
+    const iter = (capturedPrompt as AsyncIterable<{ message: unknown; session_id?: unknown }>)[Symbol.asyncIterator]()
+    const { value } = await iter.next()
+    expect(value.session_id).toBeUndefined()
+    expect(value.message).toEqual({ role: 'user', content: 'hi' })
+  })
+
   it('proactively calls query.interrupt() when the signal aborts mid-turn', async () => {
     const controller = new AbortController()
 

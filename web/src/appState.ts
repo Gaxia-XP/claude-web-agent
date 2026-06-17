@@ -4,6 +4,7 @@ import type {
   ChatMeta,
   StoredMessage,
   DirEntry,
+  ConnectionMeta,
 } from '@shared/protocol'
 
 export type UiMessage =
@@ -30,13 +31,14 @@ export type FolderPickerState = {
 
 export type AppState = {
   chats: ChatMeta[]
+  connections: ConnectionMeta[]
   activeChatId?: string
   views: Record<string, ChatView>
-  pending?: PermissionPrompt
+  pendingQueue: PermissionPrompt[]
   folder?: FolderPickerState
 }
 
-export const initialAppState: AppState = { chats: [], views: {} }
+export const initialAppState: AppState = { chats: [], connections: [], views: {}, pendingQueue: [] }
 
 const emptyView: ChatView = { messages: [], streaming: false }
 
@@ -101,12 +103,15 @@ function historyToView(messages: StoredMessage[]): ChatView {
     } else {
       let text = ''
       const tools: ToolCall[] = []
+      const errors: string[] = []
       for (const b of m.content) {
         if (b.type === 'text') text += b.text
         else if (b.type === 'tool_use') tools.push({ id: b.id, name: b.name, input: b.input })
+        else if (b.type === 'error') errors.push(b.message)
         // tool_result blocks are ignored for render
       }
-      ui.push({ role: 'assistant', text, tools })
+      if (text !== '' || tools.length > 0) ui.push({ role: 'assistant', text, tools })
+      for (const e of errors) ui.push({ role: 'error', text: e })
     }
   }
   return { messages: ui, streaming: false }
@@ -114,8 +119,11 @@ function historyToView(messages: StoredMessage[]): ChatView {
 
 export function applyServer(state: AppState, msg: ServerMsg): AppState {
   switch (msg.type) {
-    case 'chat_list':
-      return { ...state, chats: msg.chats }
+    case 'chat_list': {
+      const views = { ...state.views }
+      for (const c of msg.chats) if (!views[c.id]) views[c.id] = { messages: [], streaming: false }
+      return { ...state, chats: msg.chats, views }
+    }
     case 'chat_created':
       return {
         ...state,
@@ -136,6 +144,7 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
         chats: state.chats.filter((c) => c.id !== msg.chatId),
         views,
         activeChatId: state.activeChatId === msg.chatId ? undefined : state.activeChatId,
+        pendingQueue: state.pendingQueue.filter((p) => p.chatId !== msg.chatId),
       }
     }
     case 'chat_history': {
@@ -150,13 +159,13 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
     case 'permission_request':
       return {
         ...state,
-        pending: {
-          chatId: msg.chatId,
-          requestId: msg.requestId,
-          name: msg.name,
-          input: msg.input,
-        },
+        pendingQueue: [
+          ...state.pendingQueue,
+          { chatId: msg.chatId, requestId: msg.requestId, name: msg.name, input: msg.input },
+        ],
       }
+    case 'connection_list':
+      return { ...state, connections: msg.connections }
     case 'dir_list':
       return {
         ...state,
@@ -207,8 +216,13 @@ export function setActiveChat(state: AppState, chatId: string): AppState {
   return { ...state, activeChatId: chatId }
 }
 
-export function clearPending(state: AppState): AppState {
-  return { ...state, pending: undefined }
+export function activePrompt(state: AppState): PermissionPrompt | undefined {
+  if (state.activeChatId === undefined) return undefined
+  return state.pendingQueue.find((p) => p.chatId === state.activeChatId)
+}
+
+export function dequeuePending(state: AppState, requestId: string): AppState {
+  return { ...state, pendingQueue: state.pendingQueue.filter((p) => p.requestId !== requestId) }
 }
 
 export function closeFolder(state: AppState): AppState {

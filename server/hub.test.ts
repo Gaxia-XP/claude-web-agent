@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
-import { openDb, listChats, listMessages, getChat } from './store'
+import { openDb, listChats, listMessages, getChat, createConnection } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
+import type { Provider } from './providers/types'
+import type { ProviderConfig } from './providers/index'
 
 function makeHub() {
   const db = openDb(':memory:')
@@ -40,8 +42,9 @@ describe('ChatHub', () => {
     const { hub } = makeHub()
     const sent: ServerMsg[] = []
     hub.addConnection((m) => sent.push(m))
-    expect(sent).toHaveLength(1)
+    expect(sent).toHaveLength(2)
     expect(sent[0].type).toBe('chat_list')
+    expect(sent[1].type).toBe('connection_list')
   })
 
   it('(2) create_chat -> chat_created + chat_list, and a chats row exists', () => {
@@ -220,6 +223,180 @@ describe('ChatHub', () => {
     expect(err?.chatId).toBe(chatId)
     // No messages were persisted
     expect(listMessages(db, chatId)).toHaveLength(0)
+  })
+
+  it('(10) routes provider by the chat\'s connection.type via makeProvider(cfg)', async () => {
+    const db = openDb(':memory:')
+    createConnection(db, {
+      id: 'anth',
+      type: 'anthropic-api',
+      name: 'Anthropic',
+      apiKey: 'sk-secret',
+      defaultModel: 'claude-opus-4-8',
+      now: 500,
+    })
+    const cfgs: ProviderConfig[] = []
+    let idN = 0
+    let nowN = 1000
+    const stubProvider: Provider = {
+      type: 'stub',
+      async send(_p, ctx) {
+        ctx.onDelta('ok')
+        return { text: 'ok' }
+      },
+    }
+    const hub = new ChatHub({
+      db,
+      makeProvider: (cfg) => {
+        cfgs.push(cfg)
+        return stubProvider
+      },
+      genId: () => `id-${++idN}`,
+      now: () => ++nowN,
+    })
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(JSON.stringify({ type: 'create_chat', title: 'A', connectionId: 'anth' }))
+    const chatId = (sent.find((m) => m.type === 'chat_created') as Extract<ServerMsg, { type: 'chat_created' }>).chat.id
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'hi' }))
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+    // makeProvider received the REAL connection type + secret server-side
+    expect(cfgs[0]).toMatchObject({ type: 'anthropic-api', defaultModel: 'claude-opus-4-8', apiKey: 'sk-secret' })
+  })
+
+  it('(11) addConnection sends connection_list immediately (with seeded local, no api_key)', () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    hub.addConnection((m) => sent.push(m))
+    const cl = sent.find((m) => m.type === 'connection_list') as Extract<ServerMsg, { type: 'connection_list' }>
+    expect(cl).toBeTruthy()
+    expect(cl.connections.some((c) => c.id === 'local')).toBe(true)
+    expect(cl.connections.every((c) => (c as Record<string, unknown>).apiKey === undefined)).toBe(true)
+  })
+
+  it('(12) create_connection -> broadcastAll connection_list including the new one (no api_key)', () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(
+      JSON.stringify({
+        type: 'create_connection',
+        name: 'My Anthropic',
+        providerType: 'anthropic-api',
+        apiKey: 'sk-secret',
+        defaultModel: 'claude-opus-4-8',
+      }),
+    )
+    const lists = sent.filter((m) => m.type === 'connection_list') as Extract<ServerMsg, { type: 'connection_list' }>[]
+    const last = lists[lists.length - 1]
+    const added = last.connections.find((c) => c.name === 'My Anthropic')
+    expect(added).toMatchObject({ type: 'anthropic-api', defaultModel: 'claude-opus-4-8' })
+    expect((added as Record<string, unknown>).apiKey).toBeUndefined()
+  })
+
+  it('(13) update_connection changes name/model in next connection_list', () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(
+      JSON.stringify({ type: 'create_connection', name: 'A', providerType: 'openai-compatible', baseUrl: 'https://x/v1', defaultModel: 'm1' }),
+    )
+    const created = (sent.filter((m) => m.type === 'connection_list').pop() as Extract<ServerMsg, { type: 'connection_list' }>).connections.find((c) => c.name === 'A')!
+    handle.handle(JSON.stringify({ type: 'update_connection', id: created.id, name: 'B', defaultModel: 'm2' }))
+    const last = (sent.filter((m) => m.type === 'connection_list').pop() as Extract<ServerMsg, { type: 'connection_list' }>).connections.find((c) => c.id === created.id)!
+    expect(last.name).toBe('B')
+    expect(last.defaultModel).toBe('m2')
+  })
+
+  it('(14) delete_connection refuses to delete local (error, still present)', () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(JSON.stringify({ type: 'delete_connection', id: 'local' }))
+    expect(sent.some((m) => m.type === 'error')).toBe(true)
+    const last = sent.filter((m) => m.type === 'connection_list').pop() as Extract<ServerMsg, { type: 'connection_list' }>
+    expect(last.connections.some((c) => c.id === 'local')).toBe(true)
+  })
+
+  it('(15) delete_connection refuses when chats reference it', () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(JSON.stringify({ type: 'create_connection', name: 'A', providerType: 'anthropic-api', apiKey: 'k', defaultModel: 'm' }))
+    const conn = (sent.filter((m) => m.type === 'connection_list').pop() as Extract<ServerMsg, { type: 'connection_list' }>).connections.find((c) => c.name === 'A')!
+    handle.handle(JSON.stringify({ type: 'create_chat', title: 'bound', connectionId: conn.id }))
+    sent.length = 0
+    handle.handle(JSON.stringify({ type: 'delete_connection', id: conn.id }))
+    expect(sent.some((m) => m.type === 'error')).toBe(true)
+  })
+
+  it('(16) delete_connection removes an unused connection', () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    handle.handle(JSON.stringify({ type: 'create_connection', name: 'A', providerType: 'anthropic-api', apiKey: 'k', defaultModel: 'm' }))
+    const conn = (sent.filter((m) => m.type === 'connection_list').pop() as Extract<ServerMsg, { type: 'connection_list' }>).connections.find((c) => c.name === 'A')!
+    handle.handle(JSON.stringify({ type: 'delete_connection', id: conn.id }))
+    const last = sent.filter((m) => m.type === 'connection_list').pop() as Extract<ServerMsg, { type: 'connection_list' }>
+    expect(last.connections.some((c) => c.id === conn.id)).toBe(false)
+  })
+
+  it('(17) update_connection evicts cached runtime; next user_message rebuilds with new config', async () => {
+    const db = openDb(':memory:')
+    createConnection(db, {
+      id: 'anth',
+      type: 'anthropic-api',
+      name: 'Anthropic',
+      apiKey: 'sk-old-key',
+      defaultModel: 'claude-opus-4-8',
+      now: 500,
+    })
+    const cfgs: ProviderConfig[] = []
+    let idN = 0
+    let nowN = 1000
+    const stubProvider: Provider = {
+      type: 'stub',
+      async send(_p, ctx) {
+        ctx.onDelta('ok')
+        return { text: 'ok' }
+      },
+    }
+    const hub = new ChatHub({
+      db,
+      makeProvider: (cfg) => {
+        cfgs.push(cfg)
+        return stubProvider
+      },
+      genId: () => `id-${++idN}`,
+      now: () => ++nowN,
+    })
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+
+    // Create a chat bound to the 'anth' connection
+    handle.handle(JSON.stringify({ type: 'create_chat', title: 'A', connectionId: 'anth' }))
+    const chatId = (sent.find((m) => m.type === 'chat_created') as Extract<ServerMsg, { type: 'chat_created' }>).chat.id
+
+    // First user_message: builds runtime with old apiKey
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'first' }))
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+    expect(cfgs).toHaveLength(1)
+    expect(cfgs[0]).toMatchObject({ apiKey: 'sk-old-key' })
+
+    // Update the connection with a new apiKey
+    handle.handle(JSON.stringify({ type: 'update_connection', id: 'anth', name: 'Anthropic', apiKey: 'sk-new-key', defaultModel: 'claude-opus-4-8' }))
+
+    // Clear turn_done from sent so we can wait for the second one
+    const firstDoneIdx = sent.findIndex((m) => m.type === 'turn_done')
+    sent.splice(0, firstDoneIdx + 1)
+
+    // Second user_message: runtime must be rebuilt with new apiKey
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'second' }))
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+
+    // makeProvider must have been called TWICE, second call with the NEW key
+    expect(cfgs).toHaveLength(2)
+    expect(cfgs[1]).toMatchObject({ apiKey: 'sk-new-key' })
   })
 
   it('(9) close() removes the conn from subscribers and does NOT dispose runtimes', async () => {

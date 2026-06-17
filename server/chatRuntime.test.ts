@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
-import { openDb, createChat, listMessages, getChatSdkSession, deleteChat, DEFAULT_CONNECTION_ID } from './store'
+import type { PermissionDecision } from './permission'
+import { openDb, createChat, listMessages, getChatSdkSession, setChatSdkSession, deleteChat, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatRuntime, type RuntimeDeps } from './chatRuntime'
 
-// Flush pending microtasks (await continuations) a few times.
-async function tick(times = 5): Promise<void> {
-  for (let i = 0; i < times; i++) await Promise.resolve()
+// Sleep for `ms` real milliseconds (gives event loop time to fire timers).
+async function tick(ms = 5): Promise<void> {
+  await new Promise<void>((r) => setTimeout(r, ms))
 }
 
 // Find the requestId of the most recent permission_request in `sent`.
@@ -238,5 +239,82 @@ describe('ChatRuntime', () => {
     await tick(20)
 
     expect(activityCount).toBe(1)
+  })
+
+  // ── M3 MAJOR#1 fixes ──────────────────────────────────────────────────────
+  it('(h) #M1: a turn that throws persists an error block (not an empty assistant row)', async () => {
+    const throwing: Provider = {
+      type: 'throwing',
+      async send(): Promise<TurnResult> {
+        throw new Error('boom from provider')
+      },
+    }
+    const { deps, sent } = makeDeps({ provider: throwing })
+    const rt = new ChatRuntime('c1', deps)
+    rt.enqueue('hi')
+    await tick(20)
+    // error + turn_done emitted
+    expect(countType(sent, 'error')).toBe(1)
+    expect(countType(sent, 'turn_done')).toBe(1)
+    // persisted: user row + ONE assistant row whose content is an error block
+    const msgs = listMessages(deps.db, 'c1')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1].content).toEqual([{ type: 'error', message: 'boom from provider' }])
+  })
+
+  it('(i) #M1: timeout persists error block + cancels the parked permission', async () => {
+    let decision: PermissionDecision | undefined
+    const parking: Provider = {
+      type: 'parking',
+      async send(_p: TurnParams, ctx: ProviderContext): Promise<TurnResult> {
+        decision = await ctx.permission.resolve('Write', {})
+        return { text: '' }
+      },
+    }
+    const { deps, sent } = makeDeps({ provider: parking, turnTimeoutMs: 20 })
+    const rt = new ChatRuntime('c1', deps)
+    rt.enqueue('hi')
+    await tick(40)
+    expect(sent.some((m) => m.type === 'error' && m.message === 'turn timed out')).toBe(true)
+    // pending permission was cancelled at turn end (denied), not left hanging
+    expect(decision).toEqual({ behavior: 'deny', message: 'turn ended' })
+    // error block persisted
+    const asst = listMessages(deps.db, 'c1').find((m) => m.role === 'assistant')
+    expect(asst?.content).toEqual([{ type: 'error', message: 'turn timed out' }])
+  })
+
+  it('(j) #M1: an interrupted turn with no output and no error persists no assistant row', async () => {
+    const holder: { release: (() => void) | undefined } = { release: undefined }
+    const silent: Provider = {
+      type: 'silent',
+      async send(_p: TurnParams, _ctx: ProviderContext): Promise<TurnResult> {
+        await new Promise<void>((r) => { holder.release = r })
+        return { text: '' }
+      },
+    }
+    const { deps } = makeDeps({ provider: silent })
+    const rt = new ChatRuntime('c1', deps)
+    rt.enqueue('hi')
+    await tick()
+    rt.interrupt() // aborts; provider returns {text:''} with no deltas/errors
+    holder.release?.()
+    await tick(20)
+    const msgs = listMessages(deps.db, 'c1')
+    expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(0)
+  })
+
+  it('(k) an errored turn does NOT clear a previously saved sdk_session_id', async () => {
+    const throwing: Provider = {
+      type: 'throwing',
+      async send(): Promise<TurnResult> {
+        throw new Error('nope')
+      },
+    }
+    const { deps } = makeDeps({ provider: throwing })
+    setChatSdkSession(deps.db, 'c1', 'sess-keep', 9999)
+    const rt = new ChatRuntime('c1', deps)
+    rt.enqueue('hi')
+    await tick(20)
+    expect(getChatSdkSession(deps.db, 'c1')).toBe('sess-keep')
   })
 })

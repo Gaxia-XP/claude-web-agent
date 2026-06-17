@@ -5,7 +5,7 @@ import Fastify from 'fastify'
 import { attachWebSocketServer } from './ws'
 import { ChatHub } from './hub'
 import { openDb } from './store'
-import { LocalAgentProvider } from './providers/localAgent'
+import { makeProvider } from './providers/index'
 import { pingMessage } from './health'
 
 const PORT = Number(process.env.PORT ?? 8787)
@@ -19,11 +19,11 @@ app.get('/api/health', async () => ({ status: pingMessage() }))
 
 const hub = new ChatHub({
   db,
-  makeProvider: () => new LocalAgentProvider(),
+  makeProvider,
   genId: randomUUID,
   now: Date.now,
 })
 
-await app.listen({ port: PORT, host: '127.0.0.1' })
 attachWebSocketServer(app.server, hub)
+await app.listen({ port: PORT, host: '127.0.0.1' })
 app.log.info(`WebSocket listening on ws://127.0.0.1:${PORT}/ws`)

@@ -1,19 +1,13 @@
 import Database from "better-sqlite3"
-import type { ChatMeta, StoredMessage, StoredContentBlock, Usage } from "../shared/protocol"
+import type { ChatMeta, StoredMessage, StoredContentBlock, Usage, ConnectionMeta } from "../shared/protocol"
 
 export type DB = Database.Database
 
 export const DEFAULT_CONNECTION_ID = "local"
 
-export type ConnectionRow = {
-  id: string
-  type: string
-  name: string
-  baseUrl?: string
-  defaultModel: string
-  createdAt: number
-  updatedAt: number
-}
+export type ConnectionRow = ConnectionMeta
+
+export type ConnectionWithSecret = ConnectionRow & { apiKey?: string }
 
 export function openDb(path: string): DB {
   const db = new Database(path)
@@ -72,6 +66,7 @@ type ConnectionDbRow = {
   type: string
   name: string
   base_url: string | null
+  api_key: string | null
   default_model: string
   created_at: number
   updated_at: number
@@ -93,7 +88,7 @@ function mapConnection(r: ConnectionDbRow): ConnectionRow {
 export function listConnections(db: DB): ConnectionRow[] {
   const rows = db
     .prepare(
-      `SELECT id, type, name, base_url, default_model, created_at, updated_at
+      `SELECT id, type, name, base_url, api_key, default_model, created_at, updated_at
          FROM connections ORDER BY created_at ASC`,
     )
     .all() as ConnectionDbRow[]
@@ -103,11 +98,83 @@ export function listConnections(db: DB): ConnectionRow[] {
 export function getConnection(db: DB, id: string): ConnectionRow | undefined {
   const row = db
     .prepare(
-      `SELECT id, type, name, base_url, default_model, created_at, updated_at
+      `SELECT id, type, name, base_url, api_key, default_model, created_at, updated_at
          FROM connections WHERE id = ?`,
     )
     .get(id) as ConnectionDbRow | undefined
   return row ? mapConnection(row) : undefined
+}
+
+export function getConnectionWithSecret(db: DB, id: string): ConnectionWithSecret | undefined {
+  const row = db
+    .prepare(
+      `SELECT id, type, name, base_url, api_key, default_model, created_at, updated_at
+         FROM connections WHERE id = ?`,
+    )
+    .get(id) as ConnectionDbRow | undefined
+  if (!row) return undefined
+  const out: ConnectionWithSecret = mapConnection(row)
+  if (row.api_key !== null) out.apiKey = row.api_key
+  return out
+}
+
+export function createConnection(
+  db: DB,
+  c: { id: string; type: string; name: string; baseUrl?: string; apiKey?: string; defaultModel: string; now: number },
+): ConnectionRow {
+  db.prepare(
+    `INSERT INTO connections (id, type, name, base_url, api_key, default_model, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(c.id, c.type, c.name, c.baseUrl ?? null, c.apiKey ?? null, c.defaultModel, c.now, c.now)
+  const meta: ConnectionRow = {
+    id: c.id,
+    type: c.type,
+    name: c.name,
+    defaultModel: c.defaultModel,
+    createdAt: c.now,
+    updatedAt: c.now,
+  }
+  if (c.baseUrl !== undefined) meta.baseUrl = c.baseUrl
+  return meta
+}
+
+export function updateConnection(
+  db: DB,
+  id: string,
+  patch: { name?: string; baseUrl?: string; apiKey?: string; defaultModel?: string },
+  now: number,
+): void {
+  const sets: string[] = []
+  const vals: unknown[] = []
+  if (patch.name !== undefined) {
+    sets.push("name = ?")
+    vals.push(patch.name)
+  }
+  if (patch.baseUrl !== undefined) {
+    sets.push("base_url = ?")
+    vals.push(patch.baseUrl)
+  }
+  if (patch.apiKey !== undefined) {
+    sets.push("api_key = ?")
+    vals.push(patch.apiKey)
+  }
+  if (patch.defaultModel !== undefined) {
+    sets.push("default_model = ?")
+    vals.push(patch.defaultModel)
+  }
+  sets.push("updated_at = ?")
+  vals.push(now)
+  vals.push(id)
+  db.prepare(`UPDATE connections SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as never[]))
+}
+
+export function deleteConnection(db: DB, id: string): void {
+  db.prepare(`DELETE FROM connections WHERE id = ?`).run(id)
+}
+
+export function countChatsForConnection(db: DB, id: string): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM chats WHERE connection_id = ?`).get(id) as { n: number }
+  return row.n
 }
 
 type ChatDbRow = {
@@ -222,14 +289,27 @@ export function listMessages(db: DB, chatId: string): StoredMessage[] {
          FROM messages WHERE chat_id = ? ORDER BY created_at ASC`,
     )
     .all(chatId) as MessageDbRow[]
-  return rows.map((r) => {
+  return rows.flatMap((r) => {
+    let content: StoredContentBlock[]
+    try {
+      content = JSON.parse(r.content) as StoredContentBlock[]
+    } catch {
+      // A single corrupt row must not make the whole chat unopenable.
+      return []
+    }
     const msg: StoredMessage = {
       id: r.id,
       role: r.role,
-      content: JSON.parse(r.content) as StoredContentBlock[],
+      content,
       createdAt: r.created_at,
     }
-    if (r.usage !== null) msg.usage = JSON.parse(r.usage) as Usage
-    return msg
+    if (r.usage !== null) {
+      try {
+        msg.usage = JSON.parse(r.usage) as Usage
+      } catch {
+        // ignore unparseable usage; keep the message
+      }
+    }
+    return [msg]
   })
 }

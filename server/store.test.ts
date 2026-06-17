@@ -1,8 +1,16 @@
 import { describe, it, expect } from "vitest"
+import Database from "better-sqlite3"
 import {
   openDb,
+  migrate,
+  ensureDefaultLocalConnection,
   listConnections,
   getConnection,
+  getConnectionWithSecret,
+  createConnection,
+  updateConnection,
+  deleteConnection,
+  countChatsForConnection,
   createChat,
   listChats,
   getChat,
@@ -16,6 +24,14 @@ import {
   type DB,
 } from "./store"
 import type { StoredMessage } from "../shared/protocol"
+
+function freshDbRaw() {
+  const db = new Database(":memory:")
+  db.pragma("foreign_keys = ON")
+  migrate(db)
+  ensureDefaultLocalConnection(db)
+  return db
+}
 
 function freshDb(): DB {
   return openDb(":memory:")
@@ -172,6 +188,26 @@ describe("messages", () => {
   })
 })
 
+describe("listMessages corrupt row guard", () => {
+  it("listMessages skips a row with corrupt JSON content instead of throwing", () => {
+    const db = freshDb()
+    createChat(db, { id: "c1", title: "t", connectionId: "local", model: "sonnet", now: 1 })
+    appendMessage(db, { chatId: "c1", id: "m1", role: "user", content: [{ type: "text", text: "ok" }], createdAt: 1 })
+    // inject a corrupt row directly
+    db.prepare(`INSERT INTO messages (id, chat_id, role, content, usage, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      "bad",
+      "c1",
+      "assistant",
+      "{not json",
+      null,
+      2,
+    )
+    expect(() => listMessages(db, "c1")).not.toThrow()
+    const msgs = listMessages(db, "c1")
+    expect(msgs.map((m) => m.id)).toEqual(["m1"]) // corrupt row skipped
+  })
+})
+
 describe("deleteChat cascade", () => {
   it("removes the chat and cascades its messages", () => {
     const db = freshDb()
@@ -184,5 +220,54 @@ describe("deleteChat cascade", () => {
     expect(getChat(db, "c1")).toBeUndefined()
     expect(listChats(db)).toEqual([])
     expect(listMessages(db, "c1")).toEqual([])
+  })
+})
+
+describe("connections CRUD", () => {
+  it("creates a connection and stores api_key server-side only", () => {
+    const db = freshDbRaw()
+    createConnection(db, {
+      id: "c1",
+      type: "anthropic-api",
+      name: "My Anthropic",
+      apiKey: "sk-secret",
+      defaultModel: "claude-opus-4-8",
+      now: 1000,
+    })
+    // public getters never expose api_key
+    const pub = getConnection(db, "c1")
+    expect(pub).toMatchObject({ id: "c1", type: "anthropic-api", name: "My Anthropic", defaultModel: "claude-opus-4-8" })
+    expect((pub as Record<string, unknown>).apiKey).toBeUndefined()
+    expect(listConnections(db).every((c) => (c as Record<string, unknown>).apiKey === undefined)).toBe(true)
+    // secret getter exposes it (server-internal)
+    expect(getConnectionWithSecret(db, "c1")?.apiKey).toBe("sk-secret")
+  })
+
+  it("updates only provided fields; api_key untouched when omitted", () => {
+    const db = freshDbRaw()
+    createConnection(db, { id: "c1", type: "openai-compatible", name: "OR", baseUrl: "https://a", apiKey: "k1", defaultModel: "m1", now: 1 })
+    updateConnection(db, "c1", { name: "OpenRouter", defaultModel: "m2" }, 2)
+    const c = getConnectionWithSecret(db, "c1")!
+    expect(c.name).toBe("OpenRouter")
+    expect(c.defaultModel).toBe("m2")
+    expect(c.baseUrl).toBe("https://a")
+    expect(c.apiKey).toBe("k1") // unchanged
+    updateConnection(db, "c1", { apiKey: "k2" }, 3)
+    expect(getConnectionWithSecret(db, "c1")!.apiKey).toBe("k2")
+  })
+
+  it("counts chats referencing a connection (delete guard)", () => {
+    const db = freshDbRaw()
+    createConnection(db, { id: "c1", type: "anthropic-api", name: "A", apiKey: "k", defaultModel: "m", now: 1 })
+    expect(countChatsForConnection(db, "c1")).toBe(0)
+    createChat(db, { id: "chat1", title: "t", connectionId: "c1", model: "m", now: 1 })
+    expect(countChatsForConnection(db, "c1")).toBe(1)
+  })
+
+  it("deletes a connection with no chats", () => {
+    const db = freshDbRaw()
+    createConnection(db, { id: "c1", type: "anthropic-api", name: "A", apiKey: "k", defaultModel: "m", now: 1 })
+    deleteConnection(db, "c1")
+    expect(getConnection(db, "c1")).toBeUndefined()
   })
 })

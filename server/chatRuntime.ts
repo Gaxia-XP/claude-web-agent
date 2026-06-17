@@ -13,6 +13,7 @@ import {
   getChatSdkSession,
   setChatSdkSession,
   appendMessage,
+  listMessages,
 } from './store'
 
 export interface RuntimeDeps {
@@ -95,6 +96,7 @@ export class ChatRuntime {
   private async runOne(userText: string): Promise<void> {
     const chat = getChat(this.deps.db, this.chatId)
     const sdkSessionId = getChatSdkSession(this.deps.db, this.chatId)
+    const history = listMessages(this.deps.db, this.chatId)
 
     const abort = new AbortController()
     this.currentAbort = abort
@@ -104,6 +106,7 @@ export class ChatRuntime {
     let accumulatedText = ''
     const toolUseBlocks: StoredContentBlock[] = []
     const toolResultBlocks: StoredContentBlock[] = []
+    const errorMessages: string[] = []
     const accumulatingSend = (m: ServerMsg): void => {
       this.deps.broadcast(m)
       if (m.type === 'assistant_delta') {
@@ -112,6 +115,8 @@ export class ChatRuntime {
         toolUseBlocks.push({ type: 'tool_use', id: m.id, name: m.name, input: m.input })
       } else if (m.type === 'tool_result') {
         toolResultBlocks.push({ type: 'tool_result', id: m.id, result: m.result })
+      } else if (m.type === 'error') {
+        errorMessages.push(m.message)
       }
     }
 
@@ -123,6 +128,7 @@ export class ChatRuntime {
           cwd: chat?.cwd,
           model: chat?.model ?? 'sonnet',
           sdkSessionId,
+          history,
         },
         {
           chatId: this.chatId,
@@ -137,23 +143,30 @@ export class ChatRuntime {
       // to avoid a FOREIGN KEY constraint error.
       if (this.disposed) return
 
-      // Persist ONE assistant message: text block, then tool_use blocks, then tool_result blocks.
+      // Build ONE assistant row. On a failed/timed-out turn (no content) persist an
+      // error block so the failure survives reload; on a truly empty turn (e.g.
+      // interrupted before any output) persist nothing.
       const content: StoredContentBlock[] = []
       const text = accumulatedText !== '' ? accumulatedText : result.text
       if (text !== '') content.push({ type: 'text', text })
       content.push(...toolUseBlocks)
       content.push(...toolResultBlocks)
-
-      const usage: Usage | undefined = result.usage
-      const asstMsg: StoredMessage & { chatId: string } = {
-        chatId: this.chatId,
-        id: this.deps.genId(),
-        role: 'assistant',
-        content,
-        usage,
-        createdAt: this.deps.now(),
+      if (content.length === 0 && errorMessages.length > 0) {
+        content.push({ type: 'error', message: errorMessages.join('\n') })
       }
-      appendMessage(this.deps.db, asstMsg)
+
+      if (content.length > 0) {
+        const usage: Usage | undefined = result.usage
+        const asstMsg: StoredMessage & { chatId: string } = {
+          chatId: this.chatId,
+          id: this.deps.genId(),
+          role: 'assistant',
+          content,
+          usage,
+          createdAt: this.deps.now(),
+        }
+        appendMessage(this.deps.db, asstMsg)
+      }
 
       if (result.sdkSessionId) {
         setChatSdkSession(this.deps.db, this.chatId, result.sdkSessionId, this.deps.now())
@@ -165,6 +178,9 @@ export class ChatRuntime {
       // harmless on normal completion (query already finished), but critical on
       // timeout so the still-live query is torn down via abort→interrupt().
       abort.abort()
+      // Deny any permission left parked by a timed-out/errored turn so the provider's
+      // canUseTool promise never hangs across turns (server side of MAJOR#2).
+      this.permission.cancelAll('turn ended')
       if (this.currentAbort === abort) this.currentAbort = null
     }
   }

@@ -21,7 +21,6 @@ export class LocalAgentProvider implements Provider {
         type: 'user' as const,
         message: { role: 'user' as const, content: params.userText },
         parent_tool_use_id: null,
-        ...(sessionId ? { session_id: sessionId } : {}),
       }
     }
 
