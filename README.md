@@ -25,12 +25,24 @@ The browser connects over WebSocket to a local Fastify server (`ws://127.0.0.1:8
 
 ## Status
 
-**M1 — single-room, no persistence, localhost only.** See `docs/superpowers/specs/` for the full roadmap (M2–M6: multi-room sidebar, persistence, FolderPicker, LAN access, auth).
+**M2 — multi-chat + SQLite persistence + resume + FolderPicker, localhost only.** Multiple chats live in a sidebar (create / rename / delete); each chat persists its messages and SDK session to a local SQLite database, so conversations survive a reload and turns resume the prior session. A FolderPicker lets you choose each chat's working directory. See `docs/superpowers/specs/` for the full roadmap (M3–M6: LAN access, auth, and beyond).
+
+## Persistence
+
+Chats and messages are stored in a local SQLite database (via `better-sqlite3`). By default the file lives at `data/chats.db`, which is **gitignored** — your conversations never get committed. The `data/` directory is created automatically on first run.
+
+Override the location with the `DB_PATH` environment variable (use `:memory:` for an ephemeral, in-process database — handy for tests and throwaway runs):
+
+```bash
+DB_PATH=/tmp/my-chats.db npm run dev
+```
 
 ## Testing
 
 ```bash
-npm test          # unit suite (22 tests)
-npm run build:web # production build
-npx tsx scripts/e2e-ws.mjs  # live end-to-end WebSocket test (requires SDK login)
+npm test                          # unit suite (96 tests, Vitest, environment node)
+npm run build:web                 # production build of the web app
+npx tsx scripts/e2e-multichat.mjs # live multi-chat + persistence + resume e2e (requires Claude login)
 ```
+
+The e2e script spawns the server against a throwaway temp database (its own `DB_PATH`) on a dedicated port, so it never touches `data/chats.db`.
