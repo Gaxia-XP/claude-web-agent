@@ -303,6 +303,31 @@ describe('ChatRuntime', () => {
     expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(0)
   })
 
+  it('(k-scrut-m2) a turn that streams partial text THEN throws persists both text and error blocks', async () => {
+    const errMsg = 'mid-stream failure'
+    const partialThenThrow: Provider = {
+      type: 'partial-then-throw',
+      async send(_p: TurnParams, ctx: ProviderContext): Promise<TurnResult> {
+        ctx.onDelta('partial')
+        throw new Error(errMsg)
+      },
+    }
+    const { deps, sent } = makeDeps({ provider: partialThenThrow })
+    const rt = new ChatRuntime('c1', deps)
+    rt.enqueue('hi')
+    await tick(20)
+    // error + turn_done emitted to live view
+    expect(countType(sent, 'error')).toBe(1)
+    expect(countType(sent, 'turn_done')).toBe(1)
+    // persisted assistant row must have BOTH the partial text AND the error block
+    const msgs = listMessages(deps.db, 'c1')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1].content).toEqual([
+      { type: 'text', text: 'partial' },
+      { type: 'error', message: errMsg },
+    ])
+  })
+
   it('(k) an errored turn does NOT clear a previously saved sdk_session_id', async () => {
     const throwing: Provider = {
       type: 'throwing',

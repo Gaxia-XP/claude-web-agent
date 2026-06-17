@@ -88,6 +88,19 @@ describe('LocalAgentProvider', () => {
     expect(value.message).toEqual({ role: 'user', content: 'hi' })
   })
 
+  it('throws when result subtype is not success (e.g. error_max_turns)', async () => {
+    function failQuery(_opts: unknown) {
+      async function* gen() {
+        yield { type: 'system', subtype: 'init', session_id: 'sess-fail' }
+        yield { type: 'result', subtype: 'error_max_turns' }
+      }
+      return Object.assign(gen(), { interrupt: async () => {} })
+    }
+    const { ctx } = makeCtx()
+    const provider = new LocalAgentProvider(failQuery as never)
+    await expect(provider.send({ userText: 'x' }, ctx)).rejects.toThrow(/error_max_turns/)
+  })
+
   it('proactively calls query.interrupt() when the signal aborts mid-turn', async () => {
     const controller = new AbortController()
 
