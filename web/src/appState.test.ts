@@ -4,11 +4,12 @@ import {
   applyServer,
   appendUser,
   setActiveChat,
-  clearPending,
+  dequeuePending,
+  activePrompt,
   closeFolder,
   type AppState,
 } from './appState'
-import type { ChatMeta, StoredMessage } from '@shared/protocol'
+import type { ChatMeta, StoredMessage, ConnectionMeta } from '@shared/protocol'
 
 const meta = (id: string, over: Partial<ChatMeta> = {}): ChatMeta => ({
   id,
@@ -62,16 +63,31 @@ describe('appState', () => {
     expect(s.views.c1).toBe(before)
   })
 
-  it('permission_request sets state.pending with chatId', () => {
-    let s: AppState = appendUser(initialAppState, 'c1', 'hi')
-    s = applyServer(s, {
-      type: 'permission_request',
-      chatId: 'c1',
-      requestId: 'r1',
-      name: 'Write',
-      input: {},
-    })
-    expect(s.pending).toEqual({ chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+  it('permission_request enqueues into pendingQueue; activePrompt scopes to activeChatId', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') }) // c1 active
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    expect(s.pendingQueue).toEqual([{ chatId: 'c1', requestId: 'r1', name: 'Write', input: {} }])
+    expect(activePrompt(s)).toEqual({ chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+  })
+
+  it('a permission_request for a non-active chat is queued but NOT shown (no hijack)', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') }) // c1 active
+    s = applyServer(s, { type: 'chat_created', chat: meta('c2') }) // now c2 active
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    expect(s.pendingQueue).toHaveLength(1)
+    expect(activePrompt(s)).toBeUndefined() // c1's prompt not shown while c2 active
+    s = setActiveChat(s, 'c1')
+    expect(activePrompt(s)?.requestId).toBe('r1') // appears after switching to c1
+  })
+
+  it('two concurrent requests for the active chat both survive (FIFO, no overwrite)', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r2', name: 'Bash', input: {} })
+    expect(s.pendingQueue.map((p) => p.requestId)).toEqual(['r1', 'r2'])
+    expect(activePrompt(s)?.requestId).toBe('r1') // head shown first
+    s = dequeuePending(s, 'r1')
+    expect(activePrompt(s)?.requestId).toBe('r2') // next surfaces
   })
 
   it('turn_done sets that view streaming false', () => {
@@ -197,17 +213,12 @@ describe('appState', () => {
     expect(s.activeChatId).toBe('c1')
   })
 
-  it('clearPending removes the pending prompt', () => {
-    let s: AppState = appendUser(initialAppState, 'c1', 'hi')
-    s = applyServer(s, {
-      type: 'permission_request',
-      chatId: 'c1',
-      requestId: 'r1',
-      name: 'Write',
-      input: {},
-    })
-    s = clearPending(s)
-    expect(s.pending).toBeUndefined()
+  it('dequeuePending removes the answered prompt by requestId', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    s = dequeuePending(s, 'r1')
+    expect(s.pendingQueue).toEqual([])
+    expect(activePrompt(s)).toBeUndefined()
   })
 
   it('closeFolder removes the folder state', () => {
@@ -218,6 +229,54 @@ describe('appState', () => {
     })
     s = closeFolder(s)
     expect(s.folder).toBeUndefined()
+  })
+
+  it('chat_deleted clears that chat\'s pending permission prompts from the queue', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    expect(s.pendingQueue).toHaveLength(1)
+    s = applyServer(s, { type: 'chat_deleted', chatId: 'c1' })
+    expect(s.pendingQueue).toEqual([])
+  })
+
+  const conn = (id: string, over: Partial<ConnectionMeta> = {}): ConnectionMeta => ({
+    id,
+    type: 'anthropic-api',
+    name: 'A',
+    defaultModel: 'claude-opus-4-8',
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  })
+
+  it('connection_list sets connections', () => {
+    const s = applyServer(initialAppState, { type: 'connection_list', connections: [conn('local', { type: 'local-agent', name: 'local', defaultModel: 'sonnet' }), conn('a1')] })
+    expect(s.connections.map((c) => c.id)).toEqual(['local', 'a1'])
+  })
+
+  it('chat_list seeds an empty view for unknown chat ids (no blank pane on select)', () => {
+    const s = applyServer(initialAppState, { type: 'chat_list', chats: [meta('c1'), meta('c2')] })
+    expect(s.views.c1).toEqual({ messages: [], streaming: false })
+    expect(s.views.c2).toEqual({ messages: [], streaming: false })
+  })
+
+  it('chat_list does NOT clobber an existing (e.g. streaming) view', () => {
+    let s: AppState = appendUser(initialAppState, 'c1', 'hi') // streaming view
+    s = applyServer(s, { type: 'chat_list', chats: [meta('c1')] })
+    expect(s.views.c1.streaming).toBe(true)
+    expect(s.views.c1.messages).toEqual([{ role: 'user', text: 'hi' }])
+  })
+
+  it('chat_history renders a persisted error block as a role:error message', () => {
+    const messages: StoredMessage[] = [
+      { id: 'u1', role: 'user', content: [{ type: 'text', text: 'do it' }], createdAt: 1 },
+      { id: 'a1', role: 'assistant', content: [{ type: 'error', message: 'turn timed out' }], createdAt: 2 },
+    ]
+    const s = applyServer(initialAppState, { type: 'chat_history', chatId: 'c1', messages })
+    expect(s.views.c1.messages).toEqual([
+      { role: 'user', text: 'do it' },
+      { role: 'error', text: 'turn timed out' },
+    ])
   })
 
   // ── regression: fix #3 ────────────────────────────────────────────────────
