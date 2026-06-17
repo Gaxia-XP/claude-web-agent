@@ -73,6 +73,8 @@ export type ServerMsg =
   | { type: 'dir_list'; path: string; parent?: string; entries: DirEntry[] }
   | { type: 'error'; message: string; chatId?: string }
 
+const KNOWN_PROVIDER_TYPES = ['local-agent', 'anthropic-api', 'openai-compatible']
+
 export function parseClientMsg(raw: string): ClientMsg | null {
   let v: unknown
   try {
@@ -118,9 +120,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     }
     case 'create_connection': {
       if (
-        typeof o.name === 'string' &&
-        typeof o.providerType === 'string' &&
-        typeof o.defaultModel === 'string'
+        typeof o.name === 'string' && o.name !== '' &&
+        typeof o.providerType === 'string' && KNOWN_PROVIDER_TYPES.includes(o.providerType) &&
+        typeof o.defaultModel === 'string' && o.defaultModel !== ''
       ) {
         const m: Extract<ClientMsg, { type: 'create_connection' }> = {
           type: 'create_connection',
@@ -128,8 +130,8 @@ export function parseClientMsg(raw: string): ClientMsg | null {
           providerType: o.providerType,
           defaultModel: o.defaultModel,
         }
-        if (typeof o.baseUrl === 'string') m.baseUrl = o.baseUrl
-        if (typeof o.apiKey === 'string') m.apiKey = o.apiKey
+        if (typeof o.baseUrl === 'string' && o.baseUrl !== '') m.baseUrl = o.baseUrl
+        if (typeof o.apiKey === 'string' && o.apiKey !== '') m.apiKey = o.apiKey
         return m
       }
       return null
@@ -137,10 +139,10 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     case 'update_connection': {
       if (typeof o.id !== 'string') return null
       const m: Extract<ClientMsg, { type: 'update_connection' }> = { type: 'update_connection', id: o.id }
-      if (typeof o.name === 'string') m.name = o.name
-      if (typeof o.baseUrl === 'string') m.baseUrl = o.baseUrl
-      if (typeof o.apiKey === 'string') m.apiKey = o.apiKey
-      if (typeof o.defaultModel === 'string') m.defaultModel = o.defaultModel
+      if (typeof o.name === 'string' && o.name !== '') m.name = o.name
+      if (typeof o.baseUrl === 'string' && o.baseUrl !== '') m.baseUrl = o.baseUrl
+      if (typeof o.apiKey === 'string' && o.apiKey !== '') m.apiKey = o.apiKey
+      if (typeof o.defaultModel === 'string' && o.defaultModel !== '') m.defaultModel = o.defaultModel
       return m
     }
     case 'delete_connection':

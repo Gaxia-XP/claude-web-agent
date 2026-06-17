@@ -128,7 +128,8 @@ export class ChatHub {
       this.route(msg, send)
     } catch (err) {
       console.error('[hub] uncaught error handling client message:', err)
-      send({ type: 'error', message: 'internal error' })
+      const chatId = (msg as { chatId?: string }).chatId
+      send(chatId ? { type: 'error', chatId, message: 'internal error' } : { type: 'error', message: 'internal error' })
     }
   }
 
@@ -175,7 +176,12 @@ export class ChatHub {
         }
         // auto-subscribe the sender so it receives the turn it triggered
         this.subscribe(msg.chatId, send)
-        this.getOrCreateRuntime(msg.chatId).enqueue(msg.text)
+        try {
+          this.getOrCreateRuntime(msg.chatId).enqueue(msg.text)
+        } catch (err) {
+          send({ type: 'error', chatId: msg.chatId, message: err instanceof Error ? err.message : String(err) })
+          send({ type: 'turn_done', chatId: msg.chatId })
+        }
         break
       }
       case 'permission_response': {
