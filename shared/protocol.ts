@@ -69,6 +69,7 @@ export type ServerMsg =
   | { type: 'tool_call'; chatId: string; id: string; name: string; input: unknown }
   | { type: 'tool_result'; chatId: string; id: string; result: unknown }
   | { type: 'permission_request'; chatId: string; requestId: string; name: string; input: unknown }
+  | { type: 'permission_resolved'; chatId: string; requestId: string }
   | { type: 'turn_done'; chatId: string; usage?: Usage }
   | { type: 'dir_list'; path: string; parent?: string; entries: DirEntry[] }
   | { type: 'error'; message: string; chatId?: string }

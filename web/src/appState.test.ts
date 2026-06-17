@@ -365,6 +365,17 @@ describe('appState', () => {
     expect(s.views.c1.messages).toEqual([{ role: 'user', text: 'loaded message' }])
   })
 
+  it('permission_resolved removes exactly that requestId from pendingQueue, leaving others', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r2', name: 'Bash', input: {} })
+    expect(s.pendingQueue.map((p) => p.requestId)).toEqual(['r1', 'r2'])
+    // resolve r1 — r2 should remain and become the active prompt
+    s = applyServer(s, { type: 'permission_resolved', chatId: 'c1', requestId: 'r1' })
+    expect(s.pendingQueue.map((p) => p.requestId)).toEqual(['r2'])
+    expect(activePrompt(s)?.requestId).toBe('r2')
+  })
+
   it('immutability: a delta into c1 returns a new views object and does not mutate the input', () => {
     const prev: AppState = appendUser(initialAppState, 'c1', 'hi')
     const next = applyServer(prev, { type: 'assistant_delta', chatId: 'c1', text: 'yo' })

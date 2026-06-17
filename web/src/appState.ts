@@ -164,6 +164,8 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
           { chatId: msg.chatId, requestId: msg.requestId, name: msg.name, input: msg.input },
         ],
       }
+    case 'permission_resolved':
+      return { ...state, pendingQueue: state.pendingQueue.filter((p) => p.requestId !== msg.requestId) }
     case 'connection_list':
       return { ...state, connections: msg.connections }
     case 'dir_list':

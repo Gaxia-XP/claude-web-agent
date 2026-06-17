@@ -53,4 +53,38 @@ describe('InteractivePermissionResolver', () => {
     await expect(p).resolves.toEqual({ behavior: 'deny', message: 'connection closed' })
     expect(() => r.handleResponse('req1', 'allow')).not.toThrow()
   })
+
+  it('handleResponse emits permission_resolved with chatId + requestId', async () => {
+    const sent: ServerMsg[] = []
+    let id = 0
+    const r = new InteractivePermissionResolver('c1', (m) => sent.push(m), () => `req${++id}`)
+    const p = r.resolve('Write', { file_path: '/a' })
+    // clear the permission_request msg
+    sent.length = 0
+    r.handleResponse('req1', 'allow')
+    await p
+    expect(sent).toEqual([
+      { type: 'permission_resolved', chatId: 'c1', requestId: 'req1' },
+    ])
+  })
+
+  it('cancelAll emits permission_resolved for EACH pending requestId', async () => {
+    const sent: ServerMsg[] = []
+    let id = 0
+    const r = new InteractivePermissionResolver('c1', (m) => sent.push(m), () => `req${++id}`)
+    const p1 = r.resolve('Write', { file_path: '/a' })
+    const p2 = r.resolve('Bash', { command: 'ls' })
+    // clear the two permission_request msgs
+    sent.length = 0
+    r.cancelAll('watchdog timeout')
+    await Promise.all([p1, p2])
+    const resolved = sent.filter((m) => m.type === 'permission_resolved')
+    expect(resolved).toHaveLength(2)
+    const ids = resolved.map((m) => (m as { type: 'permission_resolved'; requestId: string }).requestId)
+    expect(ids).toContain('req1')
+    expect(ids).toContain('req2')
+    // existing behaviour: promises denied
+    await expect(p1).resolves.toEqual({ behavior: 'deny', message: 'watchdog timeout' })
+    await expect(p2).resolves.toEqual({ behavior: 'deny', message: 'watchdog timeout' })
+  })
 })

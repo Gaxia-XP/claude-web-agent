@@ -39,11 +39,13 @@ export class InteractivePermissionResolver implements PermissionResolver {
     if (!fn) return
     this.pending.delete(requestId)
     fn(decision === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: 'User denied' })
+    this.send({ type: 'permission_resolved', chatId: this.chatId, requestId })
   }
 
   cancelAll(message: string): void {
-    for (const fn of this.pending.values()) {
+    for (const [requestId, fn] of this.pending.entries()) {
       fn({ behavior: 'deny', message })
+      this.send({ type: 'permission_resolved', chatId: this.chatId, requestId })
     }
     this.pending.clear()
   }
