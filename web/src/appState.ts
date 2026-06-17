@@ -138,8 +138,15 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
         activeChatId: state.activeChatId === msg.chatId ? undefined : state.activeChatId,
       }
     }
-    case 'chat_history':
+    case 'chat_history': {
+      // If the view is currently streaming (a live turn is in progress), do NOT replace
+      // it with the persisted history snapshot — that would destroy in-flight assistant
+      // deltas and reset the composer from "Stop" to "Send". Ignore the history message
+      // and keep the live view intact. (Triggered when a user re-clicks an active chat.)
+      const existing = state.views[msg.chatId]
+      if (existing && existing.streaming) return state
       return setView(state, msg.chatId, historyToView(msg.messages))
+    }
     case 'permission_request':
       return {
         ...state,
