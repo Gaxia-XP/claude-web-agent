@@ -1,0 +1,182 @@
+import { describe, it, expect } from 'vitest'
+import type { ServerMsg } from '../shared/protocol'
+import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
+import { openDb, createChat, listMessages, getChatSdkSession, DEFAULT_CONNECTION_ID } from './store'
+import { FakeProvider } from './providers/fake'
+import { ChatRuntime, type RuntimeDeps } from './chatRuntime'
+
+// Flush pending microtasks (await continuations) a few times.
+async function tick(times = 5): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve()
+}
+
+// Find the requestId of the most recent permission_request in `sent`.
+function lastPermissionRequestId(sent: ServerMsg[]): string | undefined {
+  for (let i = sent.length - 1; i >= 0; i--) {
+    const m = sent[i]
+    if (m.type === 'permission_request') return m.requestId
+  }
+  return undefined
+}
+
+// Count broadcast messages of a given type.
+function countType(sent: ServerMsg[], type: ServerMsg['type']): number {
+  return sent.filter((m) => m.type === type).length
+}
+
+function makeDeps(overrides: Partial<RuntimeDeps> = {}): { deps: RuntimeDeps; sent: ServerMsg[] } {
+  const db = openDb(':memory:')
+  createChat(db, {
+    id: 'c1',
+    title: 'Test chat',
+    connectionId: DEFAULT_CONNECTION_ID,
+    model: 'sonnet',
+    cwd: '/work',
+    now: 1000,
+  })
+  const sent: ServerMsg[] = []
+  let idN = 0
+  let nowN = 2000
+  const deps: RuntimeDeps = {
+    db,
+    provider: new FakeProvider(),
+    broadcast: (m) => sent.push(m),
+    genId: () => `id${++idN}`,
+    now: () => ++nowN,
+    ...overrides,
+  }
+  return { deps, sent }
+}
+
+describe('ChatRuntime', () => {
+  it('(a) persists user + assistant messages, usage, and sdk session after one turn', async () => {
+    const { deps, sent } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('hi')
+    await tick()
+    // FakeProvider parked on a Write permission request -> answer it.
+    const reqId = lastPermissionRequestId(sent)
+    expect(reqId).toBeDefined()
+    rt.handlePermissionResponse(reqId!, 'allow')
+    await tick()
+
+    const msgs = listMessages(deps.db, 'c1')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
+
+    const user = msgs[0]
+    expect(user.content).toEqual([{ type: 'text', text: 'hi' }])
+
+    const asst = msgs[1]
+    // ONE assistant row: text block (accumulated from onDelta deltas) + tool_use + tool_result blocks
+    expect(asst.content).toEqual([
+      { type: 'text', text: 'Hello hi' },
+      { type: 'tool_use', id: 't1', name: 'Write', input: { file_path: '/tmp/x' } },
+      { type: 'tool_result', id: 't1', result: 'written' },
+    ])
+    expect(asst.usage).toEqual({ outputTokens: 3 })
+
+    expect(getChatSdkSession(deps.db, 'c1')).toBe('sess-1')
+    expect(rt.isIdle).toBe(true)
+  })
+
+  it('(b) serializes two enqueued turns one at a time, persisting both in order', async () => {
+    const { deps, sent } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('first')
+    rt.enqueue('second')
+    await tick()
+
+    // First turn parks; only one turn may be running at a time -> exactly one open request.
+    expect(countType(sent, 'permission_request')).toBe(1)
+    rt.handlePermissionResponse(lastPermissionRequestId(sent)!, 'allow')
+    await tick()
+
+    // Now the second turn runs and parks on its own request.
+    expect(countType(sent, 'permission_request')).toBe(2)
+    rt.handlePermissionResponse(lastPermissionRequestId(sent)!, 'allow')
+    await tick(20)
+
+    const msgs = listMessages(deps.db, 'c1')
+    // Both user messages are eagerly persisted at enqueue time (before turns run),
+    // so ordering by created_at gives: user(first), user(second), assistant(first), assistant(second).
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'user', 'assistant', 'assistant'])
+    expect(msgs[0].content).toEqual([{ type: 'text', text: 'first' }])
+    expect(msgs[1].content).toEqual([{ type: 'text', text: 'second' }])
+    expect(msgs[2].content[0]).toEqual({ type: 'text', text: 'Hello first' })
+    expect(msgs[3].content[0]).toEqual({ type: 'text', text: 'Hello second' })
+    expect(rt.isIdle).toBe(true)
+  })
+
+  it('(c) carries sdkSessionId from the first turn into the second turn', async () => {
+    // Recording provider: captures params.sdkSessionId per call; returns "s1" the first time.
+    const seen: Array<string | undefined> = []
+    let call = 0
+    const recProvider: Provider = {
+      type: 'rec',
+      async send(params: TurnParams, ctx: ProviderContext): Promise<TurnResult> {
+        seen.push(params.sdkSessionId)
+        call++
+        ctx.onDelta('ok')
+        return { text: 'ok', sdkSessionId: call === 1 ? 's1' : 's2' }
+      },
+    }
+    const { deps } = makeDeps({ provider: recProvider })
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('one')
+    await tick()
+    rt.enqueue('two')
+    await tick()
+
+    expect(seen).toEqual([undefined, 's1'])
+    expect(getChatSdkSession(deps.db, 'c1')).toBe('s2')
+    expect(rt.isIdle).toBe(true)
+  })
+
+  it('(d) #6b interrupt while parked: parked turn finishes (turn_done); queued user row is durable but its turn never runs', async () => {
+    const { deps, sent } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('first')
+    rt.enqueue('second')
+    await tick()
+
+    // First turn parked on permission; exactly one request so far.
+    expect(countType(sent, 'permission_request')).toBe(1)
+
+    rt.interrupt()
+    await tick()
+
+    // Parked turn unblocks (permission denied via cancelAll) and emits turn_done.
+    expect(countType(sent, 'turn_done')).toBe(1)
+    // The queued 'second' was cleared (#6b): no new permission_request was ever emitted.
+    expect(countType(sent, 'permission_request')).toBe(1)
+
+    // enqueue() persists the user message to the DB IMMEDIATELY (before queueing), so BOTH
+    // user rows are durably persisted: 'first' (whose turn ran -> assistant) AND 'second'
+    // (whose turn was cancelled by interrupt and never ran -> no assistant row for it).
+    // interrupt() only clears the IN-MEMORY queue; it does NOT delete persisted rows.
+    const msgs = listMessages(deps.db, 'c1')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'user', 'assistant'])
+    expect(msgs[0].content).toEqual([{ type: 'text', text: 'first' }])
+    expect(msgs[1].content).toEqual([{ type: 'text', text: 'second' }])
+    expect(msgs[2].role).toBe('assistant')
+    expect(rt.isIdle).toBe(true)
+  })
+
+  it('(e) dispose() while parked unblocks the turn with turn_done', async () => {
+    const { deps, sent } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('hi')
+    await tick()
+    expect(countType(sent, 'permission_request')).toBe(1)
+
+    rt.dispose()
+    await tick()
+
+    expect(countType(sent, 'turn_done')).toBe(1)
+  })
+})

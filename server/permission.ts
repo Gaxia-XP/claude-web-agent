@@ -20,6 +20,7 @@ export class InteractivePermissionResolver implements PermissionResolver {
   private pending = new Map<string, (d: PermissionDecision) => void>()
 
   constructor(
+    private chatId: string,
     private send: (m: ServerMsg) => void,
     private genId: () => string,
   ) {}
@@ -27,7 +28,7 @@ export class InteractivePermissionResolver implements PermissionResolver {
   async resolve(toolName: string, input: unknown): Promise<PermissionDecision> {
     if (isReadOnlyTool(toolName)) return { behavior: 'allow' }
     const requestId = this.genId()
-    this.send({ type: 'permission_request', requestId, name: toolName, input })
+    this.send({ type: 'permission_request', chatId: this.chatId, requestId, name: toolName, input })
     return new Promise<PermissionDecision>((resolve) => {
       this.pending.set(requestId, resolve)
     })
