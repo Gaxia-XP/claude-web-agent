@@ -28,7 +28,7 @@ function lastAssistant(messages: UiMessage[]): { idx: number; msg: Extract<UiMes
 
 function ensureAssistant(state: ChatState): { messages: UiMessage[]; idx: number } {
   const last = state.messages[state.messages.length - 1]
-  if (last && last.role === 'assistant') return { messages: state.messages, idx: state.messages.length - 1 }
+  if (last && last.role === 'assistant') return { messages: [...state.messages], idx: state.messages.length - 1 }
   const messages = [...state.messages, { role: 'assistant' as const, text: '', tools: [] }]
   return { messages, idx: messages.length - 1 }
 }
