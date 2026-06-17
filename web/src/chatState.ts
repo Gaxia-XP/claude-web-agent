@@ -3,6 +3,7 @@ import type { ServerMsg, ToolCall } from '@shared/protocol'
 export type UiMessage =
   | { role: 'user'; text: string }
   | { role: 'assistant'; text: string; tools: ToolCall[] }
+  | { role: 'error'; text: string }
 
 export type PermissionPrompt = { requestId: string; name: string; input: unknown }
 
@@ -16,14 +17,6 @@ export const initialState: ChatState = { messages: [], streaming: false }
 
 export function appendUser(state: ChatState, text: string): ChatState {
   return { ...state, messages: [...state.messages, { role: 'user', text }], streaming: true }
-}
-
-function lastAssistant(messages: UiMessage[]): { idx: number; msg: Extract<UiMessage, { role: 'assistant' }> } | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.role === 'assistant') return { idx: i, msg: m }
-  }
-  return null
 }
 
 function ensureAssistant(state: ChatState): { messages: UiMessage[]; idx: number } {
@@ -53,14 +46,11 @@ export function applyServer(state: ChatState, msg: ServerMsg): ChatState {
       return { ...state, pending: { requestId: msg.requestId, name: msg.name, input: msg.input } }
     case 'turn_done':
       return { ...state, streaming: false }
-    case 'error': {
-      const last = lastAssistant(state.messages)
-      const note = `\n\n[error] ${msg.message}`
-      if (!last) return state
-      const messages = [...state.messages]
-      messages[last.idx] = { ...last.msg, text: last.msg.text + note }
-      return { ...state, messages }
-    }
+    case 'error':
+      // Always surface errors as their own message so failures before the
+      // first assistant token are visible and never misattributed to a
+      // previous turn's answer. turn_done (sent alongside) clears streaming.
+      return { ...state, messages: [...state.messages, { role: 'error', text: msg.message }] }
   }
 }
 
