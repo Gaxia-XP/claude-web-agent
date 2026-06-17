@@ -151,7 +151,7 @@ export class ChatRuntime {
       if (text !== '') content.push({ type: 'text', text })
       content.push(...toolUseBlocks)
       content.push(...toolResultBlocks)
-      if (content.length === 0 && errorMessages.length > 0) {
+      if (errorMessages.length > 0) {
         content.push({ type: 'error', message: errorMessages.join('\n') })
       }
 

@@ -155,3 +155,70 @@ describe('protocol v3 — connections', () => {
     })
   })
 })
+
+describe('protocol M4/M7 — create_connection validation + empty-credential stripping', () => {
+  it('rejects create_connection with unknown providerType', () => {
+    expect(
+      parseClientMsg(
+        JSON.stringify({ type: 'create_connection', name: 'X', providerType: 'bogus', defaultModel: 'gpt-4' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('rejects create_connection with empty name', () => {
+    expect(
+      parseClientMsg(
+        JSON.stringify({ type: 'create_connection', name: '', providerType: 'anthropic-api', defaultModel: 'claude-opus-4-8' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('rejects create_connection with empty defaultModel', () => {
+    expect(
+      parseClientMsg(
+        JSON.stringify({ type: 'create_connection', name: 'X', providerType: 'anthropic-api', defaultModel: '' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('create_connection with apiKey:empty-string -> parsed msg has NO apiKey field', () => {
+    const m = parseClientMsg(
+      JSON.stringify({
+        type: 'create_connection',
+        name: 'X',
+        providerType: 'anthropic-api',
+        defaultModel: 'claude-opus-4-8',
+        apiKey: '',
+      }),
+    )
+    expect(m).not.toBeNull()
+    expect((m as Record<string, unknown>).apiKey).toBeUndefined()
+  })
+
+  it('update_connection with id + apiKey:empty-string -> parsed msg has NO apiKey field', () => {
+    const m = parseClientMsg(
+      JSON.stringify({ type: 'update_connection', id: 'c1', apiKey: '' }),
+    )
+    expect(m).not.toBeNull()
+    expect((m as Record<string, unknown>).apiKey).toBeUndefined()
+  })
+
+  it('fully valid create_connection (anthropic-api, name, defaultModel, apiKey:sk) parses with apiKey set', () => {
+    const m = parseClientMsg(
+      JSON.stringify({
+        type: 'create_connection',
+        name: 'My Anthropic',
+        providerType: 'anthropic-api',
+        defaultModel: 'claude-opus-4-8',
+        apiKey: 'sk-valid',
+      }),
+    )
+    expect(m).toEqual({
+      type: 'create_connection',
+      name: 'My Anthropic',
+      providerType: 'anthropic-api',
+      defaultModel: 'claude-opus-4-8',
+      apiKey: 'sk-valid',
+    })
+  })
+})

@@ -98,6 +98,8 @@ export class LocalAgentProvider implements Provider {
               if (msg.usage) {
                 usage = { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
               }
+            } else {
+              throw new Error(`local-agent turn failed: ${msg.subtype}`)
             }
             break
           }

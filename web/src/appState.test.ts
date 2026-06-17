@@ -105,10 +105,10 @@ describe('appState', () => {
     expect(s.views.c1.messages[0]).toEqual({ role: 'user', text: 'hi' })
   })
 
-  it('error without chatId is dropped (no view to attach it to)', () => {
+  it('error without chatId is surfaced as lastError (no view to attach it to)', () => {
     const s = applyServer(initialAppState, { type: 'error', message: 'global boom' })
-    // optional chatId on the error variant: nothing to route to, state unchanged
-    expect(s).toBe(initialAppState)
+    // chatId-less errors now surface in lastError (visible in Settings) instead of being dropped
+    expect(s.lastError).toBe('global boom')
   })
 
   it('error does not mutate a previous turn assistant message', () => {
@@ -313,9 +313,9 @@ describe('appState', () => {
     expect(s.folder?.path).toBe('/good')
   })
 
-  it('#3c: error with no chatId and folder NOT open leaves state unchanged', () => {
+  it('#3c: error with no chatId and folder NOT open sets lastError (no longer silently dropped)', () => {
     const s = applyServer(initialAppState, { type: 'error', message: 'global boom' })
-    expect(s).toBe(initialAppState)
+    expect(s.lastError).toBe('global boom')
   })
 
   // ── B2 regression: chat_history must NOT clobber a live streaming view ────────
@@ -365,6 +365,17 @@ describe('appState', () => {
     expect(s.views.c1.messages).toEqual([{ role: 'user', text: 'loaded message' }])
   })
 
+  it('permission_resolved removes exactly that requestId from pendingQueue, leaving others', () => {
+    let s: AppState = applyServer(initialAppState, { type: 'chat_created', chat: meta('c1') })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r1', name: 'Write', input: {} })
+    s = applyServer(s, { type: 'permission_request', chatId: 'c1', requestId: 'r2', name: 'Bash', input: {} })
+    expect(s.pendingQueue.map((p) => p.requestId)).toEqual(['r1', 'r2'])
+    // resolve r1 — r2 should remain and become the active prompt
+    s = applyServer(s, { type: 'permission_resolved', chatId: 'c1', requestId: 'r1' })
+    expect(s.pendingQueue.map((p) => p.requestId)).toEqual(['r2'])
+    expect(activePrompt(s)?.requestId).toBe('r2')
+  })
+
   it('immutability: a delta into c1 returns a new views object and does not mutate the input', () => {
     const prev: AppState = appendUser(initialAppState, 'c1', 'hi')
     const next = applyServer(prev, { type: 'assistant_delta', chatId: 'c1', text: 'yo' })
@@ -372,5 +383,41 @@ describe('appState', () => {
     // input view's messages array length unchanged (only the user msg)
     expect(prev.views.c1.messages).toHaveLength(1)
     expect(next.views.c1.messages).toHaveLength(2)
+  })
+
+  // ── M6: surface chatId-less errors + clear streaming on chat error ────────
+  it('(M6a) chatId-less error with folder NOT open sets lastError (was previously dropped)', () => {
+    const s = applyServer(initialAppState, { type: 'error', message: 'cannot delete a connection that has chats' })
+    expect(s.lastError).toBe('cannot delete a connection that has chats')
+  })
+
+  it('(M6b) chatId-less error with folder OPEN still goes to folder.error and does NOT set lastError', () => {
+    let s: AppState = applyServer(initialAppState, {
+      type: 'dir_list',
+      path: '/bad',
+      entries: [],
+    })
+    expect(s.folder?.open).toBe(true)
+    s = applyServer(s, { type: 'error', message: 'Permission denied' })
+    expect(s.folder?.error).toBe('Permission denied')
+    expect(s.lastError).toBeUndefined()
+  })
+
+  it('(M6c) connection_list clears lastError', () => {
+    // First set lastError via a chatId-less error (folder not open)
+    let s = applyServer(initialAppState, { type: 'error', message: 'cannot delete a connection that has chats' })
+    expect(s.lastError).toBe('cannot delete a connection that has chats')
+    // Then apply connection_list — should clear it
+    s = applyServer(s, { type: 'connection_list', connections: [] })
+    expect(s.lastError).toBeUndefined()
+  })
+
+  it('(M6d) per-chat error sets that view streaming to false', () => {
+    let s: AppState = appendUser(initialAppState, 'c1', 'hi')
+    expect(s.views.c1.streaming).toBe(true)
+    s = applyServer(s, { type: 'error', chatId: 'c1', message: 'turn failed' })
+    expect(s.views.c1.streaming).toBe(false)
+    const errors = s.views.c1.messages.filter((m) => m.role === 'error')
+    expect(errors).toEqual([{ role: 'error', text: 'turn failed' }])
   })
 })

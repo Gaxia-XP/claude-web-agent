@@ -399,6 +399,51 @@ describe('ChatHub', () => {
     expect(cfgs[1]).toMatchObject({ apiKey: 'sk-new-key' })
   })
 
+  it('(M5) getOrCreateRuntime throws -> client gets chat-scoped error + turn_done (not chatId-less error, not a hang)', async () => {
+    const db = openDb(':memory:')
+    // Create an anthropic-api connection WITHOUT an apiKey
+    createConnection(db, {
+      id: 'anth-no-key',
+      type: 'anthropic-api',
+      name: 'Anthropic (no key)',
+      defaultModel: 'claude-opus-4-8',
+      now: 500,
+    })
+    let idN = 0
+    let nowN = 1000
+    const hub = new ChatHub({
+      db,
+      makeProvider: (cfg) => {
+        if (cfg.type === 'anthropic-api' && !cfg.apiKey) {
+          throw new Error('anthropic-api connection requires an api key')
+        }
+        return new FakeProvider()
+      },
+      genId: () => `id-${++idN}`,
+      now: () => ++nowN,
+    })
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+
+    // Create a chat bound to the misconfigured connection
+    handle.handle(JSON.stringify({ type: 'create_chat', title: 'Bad', connectionId: 'anth-no-key' }))
+    const chatId = (sent.find((m) => m.type === 'chat_created') as Extract<ServerMsg, { type: 'chat_created' }>).chat.id
+
+    // Send user_message — this triggers getOrCreateRuntime which throws
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'hello' }))
+
+    // Must receive chat-scoped error (with chatId) — not a chatId-less error
+    const err = sent.find((m) => m.type === 'error') as Extract<ServerMsg, { type: 'error' }> | undefined
+    expect(err).toBeTruthy()
+    expect(err?.chatId).toBe(chatId)
+    expect(err?.message).toMatch(/api key/i)
+
+    // Must also receive turn_done with chatId so the client clears the spinner
+    const done = sent.find((m) => m.type === 'turn_done') as Extract<ServerMsg, { type: 'turn_done' }> | undefined
+    expect(done).toBeTruthy()
+    expect(done?.chatId).toBe(chatId)
+  })
+
   it('(9) close() removes the conn from subscribers and does NOT dispose runtimes', async () => {
     const { hub } = makeHub()
     const sentA: ServerMsg[] = []
