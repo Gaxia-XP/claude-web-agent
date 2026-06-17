@@ -27,6 +27,10 @@ The browser connects over WebSocket to a local Fastify server (`ws://127.0.0.1:8
 
 **M2 — multi-chat + SQLite persistence + resume + FolderPicker, localhost only.** Multiple chats live in a sidebar (create / rename / delete); each chat persists its messages and SDK session to a local SQLite database, so conversations survive a reload and turns resume the prior session. A FolderPicker lets you choose each chat's working directory. See `docs/superpowers/specs/` for the full roadmap (M3–M6: LAN access, auth, and beyond).
 
+## Security
+
+**`list_dirs` exposes the server's directory tree (names only).** This is acceptable in M2 because the server binds `127.0.0.1` (localhost only). Before any non-localhost bind — LAN access, reverse proxy, or public exposure — `list_dirs` MUST be bounded to an allowed set of roots and/or require authentication. (Tracked for M3.)
+
 ## Persistence
 
 Chats and messages are stored in a local SQLite database (via `better-sqlite3`). By default the file lives at `data/chats.db`, which is **gitignored** — your conversations never get committed. The `data/` directory is created automatically on first run.

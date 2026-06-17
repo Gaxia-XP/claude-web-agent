@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
-import { openDb, createChat, listMessages, getChatSdkSession, DEFAULT_CONNECTION_ID } from './store'
+import { openDb, createChat, listMessages, getChatSdkSession, deleteChat, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatRuntime, type RuntimeDeps } from './chatRuntime'
 
@@ -178,5 +178,65 @@ describe('ChatRuntime', () => {
     await tick()
 
     expect(countType(sent, 'turn_done')).toBe(1)
+  })
+
+  // ── regression: fix #1 ────────────────────────────────────────────────────
+  it('(f) #1: dispose() mid-turn skips persist (no FK error; no assistant row)', async () => {
+    // Use a provider that deliberately delays resolution until we dispose() first.
+    // We achieve this by capturing the resolve callback via a holder object.
+    const holder: { release: (() => void) | undefined } = { release: undefined }
+    const delayedProvider: Provider = {
+      type: 'delayed',
+      async send(_params: TurnParams, ctx: ProviderContext): Promise<TurnResult> {
+        ctx.onDelta('answer')
+        // Park until the test releases us
+        await new Promise<void>((resolve) => { holder.release = resolve })
+        return { text: 'answer', sdkSessionId: 'sess-x' }
+      },
+    }
+
+    const { deps } = makeDeps({ provider: delayedProvider })
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('hi')
+    // Let the turn start (it is now parked inside delayedProvider.send)
+    await tick()
+
+    // Delete the chat from the DB then dispose the runtime (mirrors hub delete_chat)
+    deleteChat(deps.db, 'c1')
+    rt.dispose()
+
+    // Now unblock the provider so runTurn resolves
+    holder.release?.()
+    await tick(20)
+
+    // The disposed guard must have fired — appendMessage was skipped, so no
+    // assistant row. (The chat row is gone, so attempting INSERT would have
+    // thrown a FK constraint error otherwise.)
+    const msgs = listMessages(deps.db, 'c1')
+    // user message was persisted eagerly at enqueue, but no assistant row
+    expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(0)
+  })
+
+  // ── regression: fix #5 ────────────────────────────────────────────────────
+  it('(g) #5: onActivity is called after a completed turn (not when disposed)', async () => {
+    let activityCount = 0
+    const immediateProvider: Provider = {
+      type: 'immediate',
+      async send(params: TurnParams, ctx: ProviderContext): Promise<TurnResult> {
+        ctx.onDelta('hi')
+        return { text: 'hi', sdkSessionId: 'sess-z' }
+      },
+    }
+    const { deps } = makeDeps({
+      provider: immediateProvider,
+      onActivity: () => { activityCount++ },
+    })
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('hello')
+    await tick(20)
+
+    expect(activityCount).toBe(1)
   })
 })

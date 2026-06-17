@@ -159,6 +159,29 @@ describe('ChatHub', () => {
     expect(Array.isArray(dl.entries)).toBe(true)
   })
 
+  it('(8b) #5: after a turn completes, a subscribed connection receives an updated chat_list', async () => {
+    const { hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    const chatId = created(handle, sent)
+
+    // count chat_list messages received so far (initial + after create_chat)
+    const beforeCount = sent.filter((m) => m.type === 'chat_list').length
+
+    handle.handle(JSON.stringify({ type: 'subscribe', chatId }))
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'ping' }))
+
+    await waitFor(() => sent.some((m) => m.type === 'permission_request'))
+    const req = sent.find((m) => m.type === 'permission_request') as Extract<ServerMsg, { type: 'permission_request' }>
+    handle.handle(JSON.stringify({ type: 'permission_response', requestId: req.requestId, decision: 'allow' }))
+
+    await waitFor(() => sent.some((m) => m.type === 'turn_done'))
+
+    // After the turn, at least one additional chat_list must have been broadcast
+    const afterCount = sent.filter((m) => m.type === 'chat_list').length
+    expect(afterCount).toBeGreaterThan(beforeCount)
+  })
+
   it('(9) close() removes the conn from subscribers and does NOT dispose runtimes', async () => {
     const { hub } = makeHub()
     const sentA: ServerMsg[] = []

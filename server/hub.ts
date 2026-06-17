@@ -79,7 +79,8 @@ export class ChatHub {
     let rt = this.runtimes.get(chatId)
     if (rt) return rt
     const chat = getChat(this.deps.db, chatId)
-    const connectionType = chat?.connectionId === DEFAULT_CONNECTION_ID ? 'local-agent' : 'local-agent'
+    // #7: single provider in M2; M3 will resolve via getConnection(db, chat.connectionId).type
+    const connectionType = 'local-agent'
     rt = new ChatRuntime(chatId, {
       db: this.deps.db,
       provider: this.deps.makeProvider(connectionType),
@@ -87,6 +88,8 @@ export class ChatHub {
       genId: this.deps.genId,
       now: this.deps.now,
       turnTimeoutMs: this.deps.turnTimeoutMs,
+      // #5: re-broadcast chat_list after a turn so sidebar reorders by recency
+      onActivity: () => this.broadcastAll({ type: 'chat_list', chats: listChats(this.deps.db) }),
     })
     this.runtimes.set(chatId, rt)
     return rt

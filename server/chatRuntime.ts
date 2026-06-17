@@ -22,6 +22,7 @@ export interface RuntimeDeps {
   genId: () => string
   now: () => number
   turnTimeoutMs?: number
+  onActivity?: () => void
 }
 
 export class ChatRuntime {
@@ -114,45 +115,57 @@ export class ChatRuntime {
       }
     }
 
-    const result = await runTurn(
-      this.deps.provider,
-      {
-        userText,
-        cwd: chat?.cwd,
-        model: chat?.model ?? 'sonnet',
-        sdkSessionId,
-      },
-      {
+    try {
+      const result = await runTurn(
+        this.deps.provider,
+        {
+          userText,
+          cwd: chat?.cwd,
+          model: chat?.model ?? 'sonnet',
+          sdkSessionId,
+        },
+        {
+          chatId: this.chatId,
+          send: accumulatingSend,
+          permission: this.permission,
+          signal: abort.signal,
+          turnTimeoutMs: this.deps.turnTimeoutMs,
+        },
+      )
+
+      // #1: if the chat was deleted (dispose()) during the turn, skip persisting
+      // to avoid a FOREIGN KEY constraint error.
+      if (this.disposed) return
+
+      // Persist ONE assistant message: text block, then tool_use blocks, then tool_result blocks.
+      const content: StoredContentBlock[] = []
+      const text = accumulatedText !== '' ? accumulatedText : result.text
+      if (text !== '') content.push({ type: 'text', text })
+      content.push(...toolUseBlocks)
+      content.push(...toolResultBlocks)
+
+      const usage: Usage | undefined = result.usage
+      const asstMsg: StoredMessage & { chatId: string } = {
         chatId: this.chatId,
-        send: accumulatingSend,
-        permission: this.permission,
-        signal: abort.signal,
-        turnTimeoutMs: this.deps.turnTimeoutMs,
-      },
-    )
+        id: this.deps.genId(),
+        role: 'assistant',
+        content,
+        usage,
+        createdAt: this.deps.now(),
+      }
+      appendMessage(this.deps.db, asstMsg)
 
-    this.currentAbort = null
-
-    // Persist ONE assistant message: text block, then tool_use blocks, then tool_result blocks.
-    const content: StoredContentBlock[] = []
-    const text = accumulatedText !== '' ? accumulatedText : result.text
-    if (text !== '') content.push({ type: 'text', text })
-    content.push(...toolUseBlocks)
-    content.push(...toolResultBlocks)
-
-    const usage: Usage | undefined = result.usage
-    const asstMsg: StoredMessage & { chatId: string } = {
-      chatId: this.chatId,
-      id: this.deps.genId(),
-      role: 'assistant',
-      content,
-      usage,
-      createdAt: this.deps.now(),
-    }
-    appendMessage(this.deps.db, asstMsg)
-
-    if (result.sdkSessionId) {
-      setChatSdkSession(this.deps.db, this.chatId, result.sdkSessionId, this.deps.now())
+      if (result.sdkSessionId) {
+        setChatSdkSession(this.deps.db, this.chatId, result.sdkSessionId, this.deps.now())
+        // #5: notify hub so it can re-broadcast chat_list (sidebar recency order).
+        if (!this.disposed) this.deps.onActivity?.()
+      }
+    } finally {
+      // #2: always abort the provider's async iterator after every turn —
+      // harmless on normal completion (query already finished), but critical on
+      // timeout so the still-live query is torn down via abort→interrupt().
+      abort.abort()
+      if (this.currentAbort === abort) this.currentAbort = null
     }
   }
 }

@@ -55,6 +55,11 @@ export function FolderPicker({
 
         <div className="flex-1 overflow-y-auto p-2">
           <p className="px-2 py-1 font-mono text-xs text-gray-500">{state.path}</p>
+          {state.error && (
+            <p className="mx-2 mb-1 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600">
+              {state.error}
+            </p>
+          )}
           {state.entries.length === 0 ? (
             <p className="px-2 py-4 text-center text-sm text-gray-400">ไม่มีโฟลเดอร์ย่อย</p>
           ) : (

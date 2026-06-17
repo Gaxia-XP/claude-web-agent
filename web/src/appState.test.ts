@@ -220,6 +220,45 @@ describe('appState', () => {
     expect(s.folder).toBeUndefined()
   })
 
+  // ── regression: fix #3 ────────────────────────────────────────────────────
+  it('#3a: error with no chatId while folder is open sets folder.error (keeps picker open)', () => {
+    let s: AppState = applyServer(initialAppState, {
+      type: 'dir_list',
+      path: '/bad',
+      entries: [],
+    })
+    expect(s.folder?.open).toBe(true)
+
+    s = applyServer(s, { type: 'error', message: 'Permission denied' })
+    expect(s.folder?.open).toBe(true)
+    expect(s.folder?.error).toBe('Permission denied')
+  })
+
+  it('#3b: subsequent dir_list clears folder.error', () => {
+    let s: AppState = applyServer(initialAppState, {
+      type: 'dir_list',
+      path: '/bad',
+      entries: [],
+    })
+    s = applyServer(s, { type: 'error', message: 'Permission denied' })
+    expect(s.folder?.error).toBe('Permission denied')
+
+    // A successful dir_list should clear the error
+    s = applyServer(s, {
+      type: 'dir_list',
+      path: '/good',
+      parent: '/',
+      entries: [{ name: 'src', path: '/good/src' }],
+    })
+    expect(s.folder?.error).toBeUndefined()
+    expect(s.folder?.path).toBe('/good')
+  })
+
+  it('#3c: error with no chatId and folder NOT open leaves state unchanged', () => {
+    const s = applyServer(initialAppState, { type: 'error', message: 'global boom' })
+    expect(s).toBe(initialAppState)
+  })
+
   it('immutability: a delta into c1 returns a new views object and does not mutate the input', () => {
     const prev: AppState = appendUser(initialAppState, 'c1', 'hi')
     const next = applyServer(prev, { type: 'assistant_delta', chatId: 'c1', text: 'yo' })

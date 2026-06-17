@@ -25,6 +25,7 @@ export type FolderPickerState = {
   path: string
   parent?: string
   entries: DirEntry[]
+  error?: string
 }
 
 export type AppState = {
@@ -157,13 +158,20 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
           path: msg.path,
           parent: msg.parent,
           entries: msg.entries,
+          error: undefined, // clear any prior error on a successful listing
         },
       }
     case 'error': {
       // error{chatId?}: optional chatId. A chat-less global error has no view
-      // to attach to, so drop it (state unchanged). Handled separately from the
-      // combined per-chat case because its chatId is string | undefined.
-      if (msg.chatId === undefined) return state
+      // to attach to. If the FolderPicker is open, surface it there; otherwise
+      // drop it (state unchanged). Handled separately from the combined per-chat
+      // case because its chatId is string | undefined.
+      if (msg.chatId === undefined) {
+        if (state.folder?.open) {
+          return { ...state, folder: { ...state.folder, error: msg.message } }
+        }
+        return state
+      }
       const view = getView(state, msg.chatId)
       const next = reduceView(view, msg)
       return next === view ? state : setView(state, msg.chatId, next)
