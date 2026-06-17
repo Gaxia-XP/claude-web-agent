@@ -188,6 +188,26 @@ describe("messages", () => {
   })
 })
 
+describe("listMessages corrupt row guard", () => {
+  it("listMessages skips a row with corrupt JSON content instead of throwing", () => {
+    const db = freshDb()
+    createChat(db, { id: "c1", title: "t", connectionId: "local", model: "sonnet", now: 1 })
+    appendMessage(db, { chatId: "c1", id: "m1", role: "user", content: [{ type: "text", text: "ok" }], createdAt: 1 })
+    // inject a corrupt row directly
+    db.prepare(`INSERT INTO messages (id, chat_id, role, content, usage, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      "bad",
+      "c1",
+      "assistant",
+      "{not json",
+      null,
+      2,
+    )
+    expect(() => listMessages(db, "c1")).not.toThrow()
+    const msgs = listMessages(db, "c1")
+    expect(msgs.map((m) => m.id)).toEqual(["m1"]) // corrupt row skipped
+  })
+})
+
 describe("deleteChat cascade", () => {
   it("removes the chat and cascades its messages", () => {
     const db = freshDb()

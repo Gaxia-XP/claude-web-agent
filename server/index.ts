@@ -24,6 +24,6 @@ const hub = new ChatHub({
   now: Date.now,
 })
 
-await app.listen({ port: PORT, host: '127.0.0.1' })
 attachWebSocketServer(app.server, hub)
+await app.listen({ port: PORT, host: '127.0.0.1' })
 app.log.info(`WebSocket listening on ws://127.0.0.1:${PORT}/ws`)

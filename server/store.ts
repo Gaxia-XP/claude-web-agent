@@ -289,14 +289,27 @@ export function listMessages(db: DB, chatId: string): StoredMessage[] {
          FROM messages WHERE chat_id = ? ORDER BY created_at ASC`,
     )
     .all(chatId) as MessageDbRow[]
-  return rows.map((r) => {
+  return rows.flatMap((r) => {
+    let content: StoredContentBlock[]
+    try {
+      content = JSON.parse(r.content) as StoredContentBlock[]
+    } catch {
+      // A single corrupt row must not make the whole chat unopenable.
+      return []
+    }
     const msg: StoredMessage = {
       id: r.id,
       role: r.role,
-      content: JSON.parse(r.content) as StoredContentBlock[],
+      content,
       createdAt: r.created_at,
     }
-    if (r.usage !== null) msg.usage = JSON.parse(r.usage) as Usage
-    return msg
+    if (r.usage !== null) {
+      try {
+        msg.usage = JSON.parse(r.usage) as Usage
+      } catch {
+        // ignore unparseable usage; keep the message
+      }
+    }
+    return [msg]
   })
 }

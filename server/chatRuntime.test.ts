@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
 import type { PermissionDecision } from './permission'
-import { openDb, createChat, listMessages, getChatSdkSession, deleteChat, DEFAULT_CONNECTION_ID } from './store'
+import { openDb, createChat, listMessages, getChatSdkSession, setChatSdkSession, deleteChat, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatRuntime, type RuntimeDeps } from './chatRuntime'
 
@@ -301,5 +301,20 @@ describe('ChatRuntime', () => {
     await tick(20)
     const msgs = listMessages(deps.db, 'c1')
     expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(0)
+  })
+
+  it('(k) an errored turn does NOT clear a previously saved sdk_session_id', async () => {
+    const throwing: Provider = {
+      type: 'throwing',
+      async send(): Promise<TurnResult> {
+        throw new Error('nope')
+      },
+    }
+    const { deps } = makeDeps({ provider: throwing })
+    setChatSdkSession(deps.db, 'c1', 'sess-keep', 9999)
+    const rt = new ChatRuntime('c1', deps)
+    rt.enqueue('hi')
+    await tick(20)
+    expect(getChatSdkSession(deps.db, 'c1')).toBe('sess-keep')
   })
 })
