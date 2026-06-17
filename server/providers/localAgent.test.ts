@@ -114,6 +114,6 @@ describe('LocalAgentProvider', () => {
     // Resolves because interrupt() released the gate; the generator finishes and send() returns.
     await p
     // The gate could only have been released by interrupt() being invoked at least once.
-    expect(gate).resolves.toBeUndefined()
+    await expect(gate).resolves.toBeUndefined()
   })
 })
