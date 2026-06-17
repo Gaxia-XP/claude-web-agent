@@ -146,6 +146,8 @@ export function App() {
       <div className="flex h-full">
         <Settings
           connections={state.connections}
+          chats={state.chats}
+          error={state.lastError}
           onCreate={createConnection}
           onUpdate={updateConnection}
           onDelete={deleteConnection}

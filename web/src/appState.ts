@@ -36,6 +36,7 @@ export type AppState = {
   views: Record<string, ChatView>
   pendingQueue: PermissionPrompt[]
   folder?: FolderPickerState
+  lastError?: string
 }
 
 export const initialAppState: AppState = { chats: [], connections: [], views: {}, pendingQueue: [] }
@@ -83,8 +84,9 @@ function reduceView(view: ChatView, msg: ServerMsg): ChatView {
     case 'error':
       // Always surface errors as their own message so failures before the
       // first assistant token are visible and never misattributed to a
-      // previous turn's answer.
-      return { ...view, messages: [...view.messages, { role: 'error', text: msg.message }] }
+      // previous turn's answer. Also clear streaming so the composer spinner
+      // resets even if no turn_done follows (defensive).
+      return { ...view, streaming: false, messages: [...view.messages, { role: 'error', text: msg.message }] }
     default:
       return view
   }
@@ -167,7 +169,7 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
     case 'permission_resolved':
       return { ...state, pendingQueue: state.pendingQueue.filter((p) => p.requestId !== msg.requestId) }
     case 'connection_list':
-      return { ...state, connections: msg.connections }
+      return { ...state, connections: msg.connections, lastError: undefined }
     case 'dir_list':
       return {
         ...state,
@@ -182,13 +184,13 @@ export function applyServer(state: AppState, msg: ServerMsg): AppState {
     case 'error': {
       // error{chatId?}: optional chatId. A chat-less global error has no view
       // to attach to. If the FolderPicker is open, surface it there; otherwise
-      // drop it (state unchanged). Handled separately from the combined per-chat
-      // case because its chatId is string | undefined.
+      // store in lastError so the Settings page can show it. Handled separately
+      // from the combined per-chat case because its chatId is string | undefined.
       if (msg.chatId === undefined) {
         if (state.folder?.open) {
           return { ...state, folder: { ...state.folder, error: msg.message } }
         }
-        return state
+        return { ...state, lastError: msg.message }
       }
       const view = getView(state, msg.chatId)
       const next = reduceView(view, msg)

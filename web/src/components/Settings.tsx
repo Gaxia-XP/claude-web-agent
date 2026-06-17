@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ConnectionMeta } from '@shared/protocol'
+import type { ConnectionMeta, ChatMeta } from '@shared/protocol'
 import { ModelPicker } from './ModelPicker'
 
 export type ConnectionFormPayload = {
@@ -18,12 +18,16 @@ function emptyForm(): ConnectionFormPayload {
 
 export function Settings({
   connections,
+  chats,
+  error,
   onCreate,
   onUpdate,
   onDelete,
   onClose,
 }: {
   connections: ConnectionMeta[]
+  chats: ChatMeta[]
+  error?: string
   onCreate: (p: ConnectionFormPayload) => void
   onUpdate: (id: string, patch: { name?: string; baseUrl?: string; apiKey?: string; defaultModel?: string }) => void
   onDelete: (id: string) => void
@@ -68,31 +72,45 @@ export function Settings({
       </header>
 
       <div className="flex-1 overflow-y-auto p-4">
+        {error && (
+          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+            {error}
+          </div>
+        )}
         <ul className="space-y-2">
-          {connections.map((c) => (
-            <li key={c.id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2">
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{c.name}</div>
-                <div className="truncate text-xs text-gray-500">
-                  {c.type} · {c.defaultModel}
-                  {c.baseUrl ? ` · ${c.baseUrl}` : ''}
+          {connections.map((c) => {
+            const inUse = chats.some((chat) => chat.connectionId === c.id)
+            const deleteDisabled = c.id === 'local' || inUse
+            const deleteTitle = c.id === 'local'
+              ? 'ลบ connection เริ่มต้นไม่ได้'
+              : inUse
+                ? 'ลบ connection ที่มีห้องอยู่ไม่ได้'
+                : 'ลบ'
+            return (
+              <li key={c.id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{c.name}</div>
+                  <div className="truncate text-xs text-gray-500">
+                    {c.type} · {c.defaultModel}
+                    {c.baseUrl ? ` · ${c.baseUrl}` : ''}
+                  </div>
                 </div>
-              </div>
-              <button className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100" onClick={() => startEdit(c)}>
-                แก้ไข
-              </button>
-              <button
-                className="rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
-                disabled={c.id === 'local'}
-                title={c.id === 'local' ? 'ลบ connection เริ่มต้นไม่ได้' : 'ลบ'}
-                onClick={() => {
-                  if (window.confirm(`ลบ connection "${c.name}" ?`)) onDelete(c.id)
-                }}
-              >
-                ลบ
-              </button>
-            </li>
-          ))}
+                <button className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100" onClick={() => startEdit(c)}>
+                  แก้ไข
+                </button>
+                <button
+                  className="rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
+                  disabled={deleteDisabled}
+                  title={deleteTitle}
+                  onClick={() => {
+                    if (window.confirm(`ลบ connection "${c.name}" ?`)) onDelete(c.id)
+                  }}
+                >
+                  ลบ
+                </button>
+              </li>
+            )
+          })}
         </ul>
 
         {editId === undefined ? (
