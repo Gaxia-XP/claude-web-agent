@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { Usage } from '../../shared/protocol'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './types'
+import { normalizeToolResult } from './normalize'
 
 type QueryFn = typeof query
 
@@ -39,54 +40,72 @@ export class LocalAgentProvider implements Provider {
       } as never,
     })
 
-    for await (const msg of q as AsyncIterable<any>) {
-      if (ctx.signal.aborted) {
-        await (q as any).interrupt?.()
-        break
-      }
-      switch (msg.type) {
-        case 'system':
-          if (msg.subtype === 'init' && typeof msg.session_id === 'string') sessionId = msg.session_id
-          break
-        case 'stream_event': {
-          const ev = msg.event
-          if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-            ctx.onDelta(ev.delta.text)
-          }
+    // #6a proactive interrupt: fire interrupt() the moment the signal aborts,
+    // not just at the top of the loop. Guard so it only fires once.
+    let interrupted = false
+    const onAbort = () => {
+      if (interrupted) return
+      interrupted = true
+      void (q as { interrupt?: () => Promise<void> }).interrupt?.()
+    }
+    if (ctx.signal.aborted) {
+      onAbort()
+    } else {
+      ctx.signal.addEventListener('abort', onAbort, { once: true })
+    }
+
+    try {
+      for await (const msg of q as AsyncIterable<any>) {
+        if (ctx.signal.aborted) {
+          onAbort()
           break
         }
-        case 'assistant': {
-          const content = msg.message?.content
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block?.type === 'tool_use') {
-                ctx.onToolCall({ id: block.id, name: block.name, input: block.input })
+        switch (msg.type) {
+          case 'system':
+            if (msg.subtype === 'init' && typeof msg.session_id === 'string') sessionId = msg.session_id
+            break
+          case 'stream_event': {
+            const ev = msg.event
+            if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+              ctx.onDelta(ev.delta.text)
+            }
+            break
+          }
+          case 'assistant': {
+            const content = msg.message?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block?.type === 'tool_use') {
+                  ctx.onToolCall({ id: block.id, name: block.name, input: block.input })
+                }
               }
             }
+            break
           }
-          break
-        }
-        case 'user': {
-          const content = msg.message?.content
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block?.type === 'tool_result') {
-                ctx.onToolResult(block.tool_use_id, block.content)
+          case 'user': {
+            const content = msg.message?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block?.type === 'tool_result') {
+                  ctx.onToolResult(block.tool_use_id, normalizeToolResult(block.content))
+                }
               }
             }
+            break
           }
-          break
-        }
-        case 'result': {
-          if (msg.subtype === 'success') {
-            if (typeof msg.result === 'string') finalText = msg.result
-            if (msg.usage) {
-              usage = { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
+          case 'result': {
+            if (msg.subtype === 'success') {
+              if (typeof msg.result === 'string') finalText = msg.result
+              if (msg.usage) {
+                usage = { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
+              }
             }
+            break
           }
-          break
         }
       }
+    } finally {
+      ctx.signal.removeEventListener('abort', onAbort)
     }
 
     return { text: finalText, usage, sdkSessionId: sessionId }

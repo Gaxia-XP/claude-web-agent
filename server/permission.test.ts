@@ -16,40 +16,41 @@ describe('isReadOnlyTool', () => {
 describe('InteractivePermissionResolver', () => {
   it('auto-allows read-only tools without sending a request', async () => {
     const sent: ServerMsg[] = []
-    const r = new InteractivePermissionResolver((m) => sent.push(m), () => 'id1')
+    const r = new InteractivePermissionResolver('c1', (m) => sent.push(m), () => 'id1')
     const d = await r.resolve('Read', { file_path: '/a' })
     expect(d).toEqual({ behavior: 'allow' })
     expect(sent).toHaveLength(0)
   })
 
-  it('sends a permission_request for write tools and resolves on allow', async () => {
+  it('sends a permission_request (with chatId) for write tools and resolves on allow', async () => {
     const sent: ServerMsg[] = []
     let id = 0
-    const r = new InteractivePermissionResolver((m) => sent.push(m), () => `req${++id}`)
+    const r = new InteractivePermissionResolver('c1', (m) => sent.push(m), () => `req${++id}`)
     const p = r.resolve('Write', { file_path: '/a' })
-    expect(sent).toEqual([{ type: 'permission_request', requestId: 'req1', name: 'Write', input: { file_path: '/a' } }])
+    expect(sent).toEqual([
+      { type: 'permission_request', chatId: 'c1', requestId: 'req1', name: 'Write', input: { file_path: '/a' } },
+    ])
     r.handleResponse('req1', 'allow')
     await expect(p).resolves.toEqual({ behavior: 'allow' })
   })
 
   it('resolves deny with a message', async () => {
-    const r = new InteractivePermissionResolver(() => {}, () => 'req1')
+    const r = new InteractivePermissionResolver('c1', () => {}, () => 'req1')
     const p = r.resolve('Bash', { command: 'rm -rf /' })
     r.handleResponse('req1', 'deny')
     await expect(p).resolves.toEqual({ behavior: 'deny', message: 'User denied' })
   })
 
   it('ignores responses for unknown requestId', () => {
-    const r = new InteractivePermissionResolver(() => {}, () => 'x')
+    const r = new InteractivePermissionResolver('c1', () => {}, () => 'x')
     expect(() => r.handleResponse('nonexistent', 'allow')).not.toThrow()
   })
 
   it('cancelAll settles pending promises with deny and clears the map', async () => {
-    const r = new InteractivePermissionResolver(() => {}, () => 'req1')
+    const r = new InteractivePermissionResolver('c1', () => {}, () => 'req1')
     const p = r.resolve('Write', { file_path: '/a' })
     r.cancelAll('connection closed')
     await expect(p).resolves.toEqual({ behavior: 'deny', message: 'connection closed' })
-    // subsequent handleResponse for that id is a no-op (no throw)
     expect(() => r.handleResponse('req1', 'allow')).not.toThrow()
   })
 })

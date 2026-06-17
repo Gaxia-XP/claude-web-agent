@@ -1,5 +1,5 @@
 import ReactMarkdown from 'react-markdown'
-import type { UiMessage } from '../chatState'
+import type { UiMessage } from '../appState'
 import { ToolCard } from './ToolCard'
 
 export function Message({ msg }: { msg: UiMessage }) {

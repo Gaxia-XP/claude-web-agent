@@ -1,4 +1,4 @@
-import type { PermissionPrompt } from '../chatState'
+import type { PermissionPrompt } from '../appState'
 
 export function PermissionModal({
   prompt,
