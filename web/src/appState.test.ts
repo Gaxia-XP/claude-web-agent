@@ -259,6 +259,53 @@ describe('appState', () => {
     expect(s).toBe(initialAppState)
   })
 
+  // ── B2 regression: chat_history must NOT clobber a live streaming view ────────
+  it('(B2a) chat_history for a streaming view is ignored (live stream preserved)', () => {
+    // Set up a view that is mid-stream
+    let s: AppState = appendUser(initialAppState, 'c1', 'hello')
+    // appendUser sets streaming:true
+    expect(s.views.c1.streaming).toBe(true)
+    s = applyServer(s, { type: 'assistant_delta', chatId: 'c1', text: 'partial...' })
+    expect(s.views.c1.streaming).toBe(true)
+    expect((s.views.c1.messages[1] as { role: 'assistant'; text: string; tools: unknown[] }).text).toBe('partial...')
+
+    // Save reference to the live view
+    const liveView = s.views.c1
+
+    // Now apply a chat_history with DIFFERENT committed messages (simulating re-subscribe)
+    const committedMessages: StoredMessage[] = [
+      {
+        id: 'm-old',
+        role: 'user',
+        content: [{ type: 'text', text: 'old message only' }],
+        createdAt: 1,
+      },
+    ]
+    s = applyServer(s, { type: 'chat_history', chatId: 'c1', messages: committedMessages })
+
+    // The live view must be UNCHANGED — chat_history was ignored
+    expect(s.views.c1).toBe(liveView)
+    expect(s.views.c1.streaming).toBe(true)
+    expect((s.views.c1.messages[1] as { role: 'assistant'; text: string; tools: unknown[] }).text).toBe('partial...')
+  })
+
+  it('(B2b) chat_history for a non-streaming view still populates it (initial load still works)', () => {
+    // No view yet (or streaming:false after a completed turn)
+    let s: AppState = initialAppState
+
+    const messages: StoredMessage[] = [
+      {
+        id: 'm1',
+        role: 'user',
+        content: [{ type: 'text', text: 'loaded message' }],
+        createdAt: 1,
+      },
+    ]
+    s = applyServer(s, { type: 'chat_history', chatId: 'c1', messages })
+    expect(s.views.c1.streaming).toBe(false)
+    expect(s.views.c1.messages).toEqual([{ role: 'user', text: 'loaded message' }])
+  })
+
   it('immutability: a delta into c1 returns a new views object and does not mutate the input', () => {
     const prev: AppState = appendUser(initialAppState, 'c1', 'hi')
     const next = applyServer(prev, { type: 'assistant_delta', chatId: 'c1', text: 'yo' })

@@ -182,6 +182,46 @@ describe('ChatHub', () => {
     expect(afterCount).toBeGreaterThan(beforeCount)
   })
 
+  // ── B1 regression: user_message for unknown/deleted chatId must NOT crash ─────
+  it('(B1a) user_message for a never-existed chatId -> error ServerMsg with that chatId, no throw, no DB rows', () => {
+    const { db, hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+
+    // Send user_message for a chatId that was never created
+    handle.handle(JSON.stringify({ type: 'user_message', chatId: 'ghost-chat', text: 'hello' }))
+
+    const err = sent.find((m) => m.type === 'error') as Extract<ServerMsg, { type: 'error' }> | undefined
+    expect(err).toBeTruthy()
+    expect(err?.chatId).toBe('ghost-chat')
+    // No chat or message rows created
+    expect(listChats(db)).toHaveLength(0)
+    expect(listMessages(db, 'ghost-chat')).toHaveLength(0)
+  })
+
+  it('(B1b) create_chat -> delete_chat -> user_message for that chatId -> error, server stays alive', () => {
+    const { db, hub } = makeHub()
+    const sent: ServerMsg[] = []
+    const handle = hub.addConnection((m) => sent.push(m))
+    const chatId = created(handle, sent)
+
+    // Delete the chat
+    handle.handle(JSON.stringify({ type: 'delete_chat', chatId }))
+    expect(getChat(db, chatId)).toBeUndefined()
+
+    // Clear sent so we can check only what comes after the delete
+    sent.length = 0
+
+    // Now send user_message for the deleted chatId — must NOT throw
+    handle.handle(JSON.stringify({ type: 'user_message', chatId, text: 'oops' }))
+
+    const err = sent.find((m) => m.type === 'error') as Extract<ServerMsg, { type: 'error' }> | undefined
+    expect(err).toBeTruthy()
+    expect(err?.chatId).toBe(chatId)
+    // No messages were persisted
+    expect(listMessages(db, chatId)).toHaveLength(0)
+  })
+
   it('(9) close() removes the conn from subscribers and does NOT dispose runtimes', async () => {
     const { hub } = makeHub()
     const sentA: ServerMsg[] = []

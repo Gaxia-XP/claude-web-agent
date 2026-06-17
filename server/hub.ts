@@ -98,7 +98,12 @@ export class ChatHub {
   private handle(raw: string, send: Send): void {
     const msg = parseClientMsg(raw)
     if (!msg) return
-    this.route(msg, send)
+    try {
+      this.route(msg, send)
+    } catch (err) {
+      console.error('[hub] uncaught error handling client message:', err)
+      send({ type: 'error', message: 'internal error' })
+    }
   }
 
   private route(msg: ClientMsg, send: Send): void {
@@ -129,6 +134,13 @@ export class ChatHub {
         break
       }
       case 'user_message': {
+        // Guard: reject messages for chats that don't exist (deleted or never created).
+        // Without this, enqueue() eagerly appends a DB row whose chat_id has no parent
+        // chats row → better-sqlite3 throws SQLITE_CONSTRAINT_FOREIGNKEY synchronously.
+        if (!getChat(this.deps.db, msg.chatId)) {
+          send({ type: 'error', chatId: msg.chatId, message: 'chat not found' })
+          break
+        }
         // auto-subscribe the sender so it receives the turn it triggered
         this.subscribe(msg.chatId, send)
         this.getOrCreateRuntime(msg.chatId).enqueue(msg.text)
