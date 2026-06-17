@@ -3,6 +3,15 @@ import type { UiMessage } from '../chatState'
 import { ToolCard } from './ToolCard'
 
 export function Message({ msg }: { msg: UiMessage }) {
+  if (msg.role === 'error') {
+    return (
+      <div className="flex justify-center px-3 py-2">
+        <div className="max-w-[90%] rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+          ⚠ {msg.text}
+        </div>
+      </div>
+    )
+  }
   const isUser = msg.role === 'user'
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} px-3 py-2`}>

@@ -71,4 +71,27 @@ describe('chatState', () => {
       expect(asst.tools).toEqual([{ id: 't1', name: 'Read', input: { file_path: '/x' } }])
     }
   })
+
+  it('error before any assistant token is shown as its own message (not dropped)', () => {
+    let s: ChatState = appendUser(initialState, 'hi') // messages: [user]
+    s = applyServer(s, { type: 'error', message: 'auth failed' })
+    const errors = s.messages.filter(m => m.role === 'error')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toEqual({ role: 'error', text: 'auth failed' })
+    // user message left intact
+    expect(s.messages[0]).toEqual({ role: 'user', text: 'hi' })
+  })
+
+  it('error does not attach to or mutate a previous turn\'s assistant message', () => {
+    let s: ChatState = appendUser(initialState, 'q1')
+    s = applyServer(s, { type: 'assistant_delta', text: 'answer1' })
+    s = applyServer(s, { type: 'turn_done' })
+    // second turn errors before any token
+    s = appendUser(s, 'q2')
+    s = applyServer(s, { type: 'error', message: 'boom' })
+    // previous assistant answer is untouched (no '[error]' appended to it)
+    expect(s.messages[1]).toEqual({ role: 'assistant', text: 'answer1', tools: [] })
+    // a dedicated error message exists at the end
+    expect(s.messages[s.messages.length - 1]).toEqual({ role: 'error', text: 'boom' })
+  })
 })
