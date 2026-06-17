@@ -11,6 +11,11 @@ import {
   createChat,
   listChats,
   listMessages,
+  listConnections,
+  createConnection,
+  updateConnection,
+  deleteConnection,
+  countChatsForConnection,
   renameChat,
   deleteChat,
   type DB,
@@ -44,13 +49,18 @@ export class ChatHub {
 
   addConnection(send: Send): ConnectionHandle {
     this.allSends.add(send)
-    // immediately push the current chat list to the new connection
+    // immediately push the current chat list and connection list to the new connection
     send({ type: 'chat_list', chats: listChats(this.deps.db) })
+    send({ type: 'connection_list', connections: listConnections(this.deps.db) })
 
     return {
       handle: (raw: string) => this.handle(raw, send),
       close: () => this.close(send),
     }
+  }
+
+  private broadcastConnections(): void {
+    this.broadcastAll({ type: 'connection_list', connections: listConnections(this.deps.db) })
   }
 
   private broadcast(m: ServerMsg): void {
@@ -181,6 +191,44 @@ export class ChatHub {
         deleteChat(this.deps.db, msg.chatId)
         this.broadcastAll({ type: 'chat_deleted', chatId: msg.chatId })
         this.broadcastAll({ type: 'chat_list', chats: listChats(this.deps.db) })
+        break
+      }
+      case 'create_connection': {
+        const id = this.deps.genId()
+        const now = this.deps.now()
+        createConnection(this.deps.db, {
+          id,
+          type: msg.providerType,
+          name: msg.name,
+          baseUrl: msg.baseUrl,
+          apiKey: msg.apiKey,
+          defaultModel: msg.defaultModel,
+          now,
+        })
+        this.broadcastConnections()
+        break
+      }
+      case 'update_connection': {
+        updateConnection(
+          this.deps.db,
+          msg.id,
+          { name: msg.name, baseUrl: msg.baseUrl, apiKey: msg.apiKey, defaultModel: msg.defaultModel },
+          this.deps.now(),
+        )
+        this.broadcastConnections()
+        break
+      }
+      case 'delete_connection': {
+        if (msg.id === DEFAULT_CONNECTION_ID) {
+          send({ type: 'error', message: 'cannot delete the default local connection' })
+          break
+        }
+        if (countChatsForConnection(this.deps.db, msg.id) > 0) {
+          send({ type: 'error', message: 'cannot delete a connection that has chats' })
+          break
+        }
+        deleteConnection(this.deps.db, msg.id)
+        this.broadcastConnections()
         break
       }
       case 'list_dirs': {
