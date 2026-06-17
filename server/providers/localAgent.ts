@@ -20,7 +20,7 @@ export class LocalAgentProvider implements Provider {
         type: 'user' as const,
         message: { role: 'user' as const, content: params.userText },
         parent_tool_use_id: null,
-        session_id: sessionId ?? '',
+        ...(sessionId ? { session_id: sessionId } : {}),
       }
     }
 
@@ -78,9 +78,11 @@ export class LocalAgentProvider implements Provider {
           break
         }
         case 'result': {
-          if (msg.subtype === 'success' && typeof msg.result === 'string') finalText = msg.result
-          if (msg.usage) {
-            usage = { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
+          if (msg.subtype === 'success') {
+            if (typeof msg.result === 'string') finalText = msg.result
+            if (msg.usage) {
+              usage = { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
+            }
           }
           break
         }
