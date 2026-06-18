@@ -342,4 +342,72 @@ describe('ChatRuntime', () => {
     await tick(20)
     expect(getChatSdkSession(deps.db, 'c1')).toBe('sess-keep')
   })
+
+  // ── M4: per-turn resolver + onEvent + awaitable result ────────────────────
+  // An inline allow-all resolver (the structural interface — no class needed).
+  const allowAll = { resolve: async () => ({ behavior: 'allow' as const }) }
+
+  it('(m4-a) enqueue returns a promise resolving with the TurnResult', async () => {
+    const { deps } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+    // pass an allow-all per-turn resolver so FakeProvider does not park on its Write
+    const result = await rt.enqueue('hi', { resolver: allowAll })
+    expect(result.text).toBe('Hello hi')
+    expect(result.usage).toEqual({ outputTokens: 3 })
+    expect(result.sdkSessionId).toBe('sess-1')
+    expect(rt.isIdle).toBe(true)
+  })
+
+  it('(m4-b) per-turn onEvent receives the same events as broadcast', async () => {
+    const { deps, sent } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+    const events: ServerMsg[] = []
+    await rt.enqueue('x', { resolver: allowAll, onEvent: (m) => events.push(m) })
+    // onEvent saw the deltas + turn_done
+    expect(events.some((m) => m.type === 'assistant_delta')).toBe(true)
+    expect(events.some((m) => m.type === 'turn_done')).toBe(true)
+    // broadcast (sent) ALSO saw them — live-sync preserved
+    expect(sent.some((m) => m.type === 'assistant_delta')).toBe(true)
+    expect(sent.some((m) => m.type === 'turn_done')).toBe(true)
+  })
+
+  it('(m4-c) per-turn resolver is consulted instead of the interactive one', async () => {
+    const { deps, sent } = makeDeps()
+    const rt = new ChatRuntime('c1', deps)
+    const seen: string[] = []
+    const recording = {
+      resolve: async (toolName: string) => {
+        seen.push(toolName)
+        return { behavior: 'allow' as const }
+      },
+    }
+    await rt.enqueue('hi', { resolver: recording })
+    // FakeProvider asks to Write; the per-turn resolver handled it (NOT the interactive one)
+    expect(seen).toEqual(['Write'])
+    // interactive path never emitted a permission_request
+    expect(countType(sent, 'permission_request')).toBe(0)
+  })
+
+  it('(m4-d) queued (unrun) turns settle with empty text on interrupt', async () => {
+    // a provider that parks until released, so the SECOND turn stays queued
+    const holder: { release: (() => void) | undefined } = { release: undefined }
+    const parking = {
+      type: 'park',
+      async send() {
+        await new Promise<void>((r) => { holder.release = r })
+        return { text: 'done' }
+      },
+    }
+    const { deps } = makeDeps({ provider: parking })
+    const rt = new ChatRuntime('c1', deps)
+    const first = rt.enqueue('one', { resolver: allowAll })
+    const second = rt.enqueue('two', { resolver: allowAll })
+    await tick()
+    rt.interrupt() // aborts the running turn + clears the queued 'two'
+    holder.release?.()
+    const r2 = await second // must NOT hang
+    expect(r2).toEqual({ text: '' })
+    await first // also settles (running turn aborted)
+    expect(rt.isIdle).toBe(true)
+  })
 })

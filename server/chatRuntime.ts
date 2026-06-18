@@ -4,8 +4,8 @@ import type {
   StoredContentBlock,
   Usage,
 } from '../shared/protocol'
-import type { Provider } from './providers/types'
-import { InteractivePermissionResolver } from './permission'
+import type { Provider, TurnResult } from './providers/types'
+import { InteractivePermissionResolver, type PermissionResolver } from './permission'
 import { runTurn } from './agent'
 import {
   type DB,
@@ -26,9 +26,25 @@ export interface RuntimeDeps {
   onActivity?: () => void
 }
 
+export interface EnqueueOptions {
+  // Per-turn permission resolver. Defaults to the chat's interactive (WS) resolver.
+  // Native/compat API turns pass a PolicyPermissionResolver here.
+  resolver?: PermissionResolver
+  // Per-turn event sink, IN ADDITION to the hub broadcast (which stays wired so WS
+  // subscribers still see the turn). Used by the native-API SSE/non-stream callers.
+  onEvent?: (m: ServerMsg) => void
+}
+
+type QueueItem = {
+  text: string
+  resolver?: PermissionResolver
+  onEvent?: (m: ServerMsg) => void
+  settle: (result: TurnResult) => void
+}
+
 export class ChatRuntime {
   private permission: InteractivePermissionResolver
-  private queue: string[] = []
+  private queue: QueueItem[] = []
   private running = false
   private disposed = false
   private currentAbort: AbortController | null = null
@@ -44,7 +60,7 @@ export class ChatRuntime {
     )
   }
 
-  enqueue(text: string): void {
+  enqueue(text: string, opts: EnqueueOptions = {}): Promise<TurnResult> {
     // Persist the user message IMMEDIATELY (eagerly) so it is durable even if the turn
     // later aborts or is interrupted before it runs. interrupt() clears only the queue.
     const userMsg: StoredMessage & { chatId: string } = {
@@ -55,13 +71,21 @@ export class ChatRuntime {
       createdAt: this.deps.now(),
     }
     appendMessage(this.deps.db, userMsg)
-    this.queue.push(text)
+    let settle!: (result: TurnResult) => void
+    const done = new Promise<TurnResult>((resolve) => {
+      settle = resolve
+    })
+    this.queue.push({ text, resolver: opts.resolver, onEvent: opts.onEvent, settle })
     void this.drain()
+    return done
   }
 
   interrupt(): void {
     this.currentAbort?.abort()
-    this.queue = [] // #6b: clear pending (unrun) turns; persisted user rows are untouched
+    // #6b: clear pending (unrun) turns; settle their promises so API callers never hang.
+    // The persisted user rows are untouched.
+    for (const item of this.queue) item.settle({ text: '' })
+    this.queue = []
     this.permission.cancelAll('interrupted by user')
   }
 
@@ -73,6 +97,7 @@ export class ChatRuntime {
     this.disposed = true
     this.currentAbort?.abort()
     this.permission.cancelAll('chat closed')
+    for (const item of this.queue) item.settle({ text: '' })
     this.queue = []
   }
 
@@ -85,15 +110,16 @@ export class ChatRuntime {
     this.running = true
     try {
       while (this.queue.length > 0 && !this.disposed) {
-        const userText = this.queue.shift()!
-        await this.runOne(userText)
+        const item = this.queue.shift()!
+        await this.runOne(item)
       }
     } finally {
       this.running = false
     }
   }
 
-  private async runOne(userText: string): Promise<void> {
+  private async runOne(item: QueueItem): Promise<void> {
+    const userText = item.text
     const chat = getChat(this.deps.db, this.chatId)
     const sdkSessionId = getChatSdkSession(this.deps.db, this.chatId)
     const history = listMessages(this.deps.db, this.chatId)
@@ -101,14 +127,15 @@ export class ChatRuntime {
     const abort = new AbortController()
     this.currentAbort = abort
 
-    // Accumulating send: forward to broadcast AND collect content blocks for the ONE
-    // assistant row persisted at turn_done.
+    // Accumulating send: forward to broadcast (WS live-sync) AND the per-turn onEvent sink
+    // (HTTP/SSE caller) AND collect content blocks for the ONE assistant row.
     let accumulatedText = ''
     const toolUseBlocks: StoredContentBlock[] = []
     const toolResultBlocks: StoredContentBlock[] = []
     const errorMessages: string[] = []
     const accumulatingSend = (m: ServerMsg): void => {
       this.deps.broadcast(m)
+      item.onEvent?.(m)
       if (m.type === 'assistant_delta') {
         accumulatedText += m.text
       } else if (m.type === 'tool_call') {
@@ -120,8 +147,9 @@ export class ChatRuntime {
       }
     }
 
+    let result: TurnResult = { text: '' }
     try {
-      const result = await runTurn(
+      result = await runTurn(
         this.deps.provider,
         {
           userText,
@@ -133,7 +161,9 @@ export class ChatRuntime {
         {
           chatId: this.chatId,
           send: accumulatingSend,
-          permission: this.permission,
+          // Per-turn resolver: native-API turns pass a PolicyPermissionResolver; WS turns
+          // fall back to the chat's shared interactive resolver.
+          permission: item.resolver ?? this.permission,
           signal: abort.signal,
           turnTimeoutMs: this.deps.turnTimeoutMs,
         },
@@ -175,13 +205,17 @@ export class ChatRuntime {
       }
     } finally {
       // #2: always abort the provider's async iterator after every turn —
-      // harmless on normal completion (query already finished), but critical on
-      // timeout so the still-live query is torn down via abort→interrupt().
+      // harmless on normal completion, critical on timeout to tear down the live query.
       abort.abort()
       // Deny any permission left parked by a timed-out/errored turn so the provider's
       // canUseTool promise never hangs across turns (server side of MAJOR#2).
       this.permission.cancelAll('turn ended')
       if (this.currentAbort === abort) this.currentAbort = null
+      // Settle the per-turn promise exactly once with the (possibly empty) result so
+      // native-API callers awaiting the turn always resolve — even on dispose/error.
+      // Deferred by one microtask so drain's finally (running = false) completes first,
+      // allowing isIdle to be true when the caller's await continuation resumes.
+      void Promise.resolve().then(() => item.settle(result))
     }
   }
 }
