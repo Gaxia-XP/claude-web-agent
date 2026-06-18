@@ -85,6 +85,7 @@ const nsRes = await fetch(`${api}/chats/${chatId}/messages`, {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ text: 'hi', stream: false }),
 })
+if (!nsRes.ok) fail(`non-stream status ${nsRes.status}`)
 const ns = await nsRes.json()
 if (ns.text !== 'Hello rest') fail(`non-stream text was ${JSON.stringify(ns)}`)
 
@@ -135,5 +136,5 @@ if (conns.connections.some((c) => 'apiKey' in c)) fail('apiKey leaked in GET /ap
 console.log('✅ native HTTP API e2e PASS — REST + SSE + live-sync + persistence + /api/query')
 ws.close()
 await app.close()
-fake.close()
+await new Promise((r) => fake.close(r))
 process.exit(0)

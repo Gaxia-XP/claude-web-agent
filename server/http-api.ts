@@ -56,23 +56,29 @@ async function runApiTurn(
   if (stream) {
     reply.hijack()
     const raw = reply.raw
+    // Writing to a destroyed ServerResponse (client disconnected mid-turn) emits an async
+    // 'error' event which, unhandled, would crash the process. Swallow it. The turn keeps
+    // running (persist + WS live-sync) — same as the WS surface, where a disconnect does
+    // not abort the turn. Per-turn cancellation is M6.
+    raw.on('error', () => {})
+    const canWrite = (): boolean => !raw.writableEnded && !raw.destroyed
     raw.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     })
-    if (replyChatId) raw.write(sseFrame('chat', { chatId: replyChatId }))
+    if (replyChatId && canWrite()) raw.write(sseFrame('chat', { chatId: replyChatId }))
     const onEvent = (m: ServerMsg): void => {
-      if (raw.writableEnded) return
+      if (!canWrite()) return
       const frame = serverMsgToSse(m)
       if (frame) raw.write(frame)
     }
     try {
       await hub.enqueueApiTurn(chatId, text, { resolver, onEvent })
     } catch (err) {
-      if (!raw.writableEnded) raw.write(sseFrame('error', { message: err instanceof Error ? err.message : String(err) }))
+      if (canWrite()) raw.write(sseFrame('error', { message: err instanceof Error ? err.message : String(err) }))
     }
-    if (!raw.writableEnded) raw.end()
+    if (canWrite()) raw.end()
     return reply
   }
 

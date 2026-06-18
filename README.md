@@ -87,7 +87,7 @@ curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H 'content-type: applica
 
 ## Status
 
-**M3 — multi-provider (local-agent / anthropic-api / openai-compatible) + connections CRUD + Settings UI.** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 adds the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. See `docs/superpowers/specs/` for the full roadmap (M4–M6: native HTTP API, compat API, LAN/auth).
+**M4 — native HTTP API (REST + SSE).** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 adds the native HTTP REST + SSE surface (see "Native HTTP API" above). See `docs/superpowers/specs/` for the full roadmap (M5–M6: compat API, LAN/auth).
 
 ## Security
 

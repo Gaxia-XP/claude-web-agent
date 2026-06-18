@@ -60,6 +60,9 @@ export class ChatRuntime {
     )
   }
 
+  // Returns a promise that resolves with the turn's TurnResult once the turn fully completes.
+  // NOTE: isIdle is only guaranteed true after this promise resolves (settle is deferred one
+  // microtask so drain() can mark the runtime idle first).
   enqueue(text: string, opts: EnqueueOptions = {}): Promise<TurnResult> {
     // Persist the user message IMMEDIATELY (eagerly) so it is durable even if the turn
     // later aborts or is interrupted before it runs. interrupt() clears only the queue.

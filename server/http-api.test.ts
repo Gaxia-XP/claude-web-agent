@@ -89,6 +89,11 @@ describe('serverMsgToSse', () => {
       'event: error\ndata: {"message":"boom"}\n\n',
     )
   })
+  it('maps tool_result -> tool_result frame', () => {
+    expect(serverMsgToSse({ type: 'tool_result', chatId: 'c', id: 't1', result: { ok: true } })).toBe(
+      'event: tool_result\ndata: {"id":"t1","result":{"ok":true}}\n\n',
+    )
+  })
   it('returns null for interactive/housekeeping messages', () => {
     expect(serverMsgToSse({ type: 'permission_request', chatId: 'c', requestId: 'r', name: 'Write', input: {} })).toBeNull()
     expect(serverMsgToSse({ type: 'chat_list', chats: [] })).toBeNull()
