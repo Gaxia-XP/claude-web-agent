@@ -5,6 +5,7 @@ import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
 import type { Provider } from './providers/types'
 import type { ProviderConfig } from './providers/index'
+import { PolicyPermissionResolver } from './permission'
 
 function makeHub() {
   const db = openDb(':memory:')
@@ -471,5 +472,89 @@ describe('ChatHub', () => {
     handleA.handle(JSON.stringify({ type: 'user_message', chatId, text: 'again' }))
     await waitFor(() => sentA.filter((m) => m.type === 'permission_request').length >= 2)
     expect(sentA.filter((m) => m.type === 'permission_request').length).toBeGreaterThanOrEqual(2)
+  })
+
+  // ── M4: native HTTP API hub methods ───────────────────────────────────────
+  it('(m4-1) createChatFromApi creates a chat, broadcasts chat_list, returns ChatMeta', () => {
+    const { db, hub } = makeHub()
+    const sent: ServerMsg[] = []
+    hub.addConnection((m) => sent.push(m))
+    sent.length = 0
+    const chat = hub.createChatFromApi({ title: 'Via API' })
+    expect(chat.title).toBe('Via API')
+    expect(chat.connectionId).toBe('local')
+    expect(chat.model).toBe('sonnet')
+    expect(listChats(db).map((c) => c.id)).toContain(chat.id)
+    expect(sent.some((m) => m.type === 'chat_list')).toBe(true)
+  })
+
+  it('(m4-2) createChatFromApi throws for an unknown connectionId', () => {
+    const { hub } = makeHub()
+    expect(() => hub.createChatFromApi({ connectionId: 'nope' })).toThrow(/connection not found/)
+  })
+
+  it('(m4-3) enqueueApiTurn runs an auto-policy turn and broadcasts to a WS subscriber', async () => {
+    const { db, hub } = makeHub()
+    const sub: ServerMsg[] = []
+    const subHandle = hub.addConnection((m) => sub.push(m))
+    const chat = hub.createChatFromApi({ title: 'API turn' })
+    subHandle.handle(JSON.stringify({ type: 'subscribe', chatId: chat.id }))
+
+    const apiEvents: ServerMsg[] = []
+    const result = await hub.enqueueApiTurn(chat.id, 'hi', {
+      resolver: new PolicyPermissionResolver('auto'),
+      onEvent: (m) => apiEvents.push(m),
+    })
+
+    // FakeProvider: 'Hello ' + 'hi'; Write auto-allowed by 'auto'
+    expect(result.text).toBe('Hello hi')
+    expect(apiEvents.some((m) => m.type === 'assistant_delta')).toBe(true)
+    expect(apiEvents.some((m) => m.type === 'turn_done')).toBe(true)
+    // LIVE SYNC: the WS subscriber ALSO received the turn
+    expect(sub.some((m) => m.type === 'assistant_delta' && m.chatId === chat.id)).toBe(true)
+    expect(sub.some((m) => m.type === 'turn_done' && m.chatId === chat.id)).toBe(true)
+    expect(listMessages(db, chat.id).map((m) => m.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('(m4-4) enqueueApiTurn under readonly policy denies the Write tool (no tool_call)', async () => {
+    const { hub } = makeHub()
+    hub.addConnection(() => {})
+    const chat = hub.createChatFromApi({ title: 'ro' })
+    const apiEvents: ServerMsg[] = []
+    const result = await hub.enqueueApiTurn(chat.id, 'hi', {
+      resolver: new PolicyPermissionResolver('readonly'),
+      onEvent: (m) => apiEvents.push(m),
+    })
+    expect(result.text).toBe('Hello hi')
+    expect(apiEvents.some((m) => m.type === 'tool_call')).toBe(false)
+  })
+
+  it('(m4-5) enqueueApiTurn on a build failure broadcasts error+turn_done and throws', () => {
+    const db = openDb(':memory:')
+    createConnection(db, { id: 'anth-no-key', type: 'anthropic-api', name: 'no key', defaultModel: 'm', now: 1 })
+    let idN = 0
+    let nowN = 1000
+    const hub = new ChatHub({
+      db,
+      makeProvider: (cfg) => {
+        if (cfg.type === 'anthropic-api' && !cfg.apiKey) throw new Error('anthropic-api connection requires an api key')
+        return new FakeProvider()
+      },
+      genId: () => `id-${++idN}`,
+      now: () => ++nowN,
+    })
+    const sub: ServerMsg[] = []
+    const subHandle = hub.addConnection((m) => sub.push(m))
+    const chat = hub.createChatFromApi({ connectionId: 'anth-no-key', title: 'bad' })
+    subHandle.handle(JSON.stringify({ type: 'subscribe', chatId: chat.id }))
+    sub.length = 0
+
+    // getOrCreateRuntime throws synchronously inside enqueueApiTurn
+    expect(() =>
+      hub.enqueueApiTurn(chat.id, 'hi', { resolver: new PolicyPermissionResolver('auto'), onEvent: () => {} }),
+    ).toThrow(/api key/i)
+    // WS subscriber got chat-scoped error + turn_done so its spinner clears
+    expect(sub.some((m) => m.type === 'error' && m.chatId === chat.id)).toBe(true)
+    expect(sub.some((m) => m.type === 'turn_done' && m.chatId === chat.id)).toBe(true)
   })
 })
