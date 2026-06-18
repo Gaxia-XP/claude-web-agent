@@ -3,7 +3,8 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { openDb, listChats } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
-import { registerHttpApi } from './http-api'
+import { registerHttpApi, serverMsgToSse } from './http-api'
+import type { ServerMsg } from '../shared/protocol'
 
 function makeApp(): { app: FastifyInstance; hub: ChatHub; db: ReturnType<typeof openDb> } {
   const db = openDb(':memory:')
@@ -64,5 +65,84 @@ describe('http-api read + create endpoints', () => {
     expect((ok.json() as { messages: unknown[] }).messages).toEqual([])
     const missing = await app.inject({ method: 'GET', url: '/api/chats/ghost/messages' })
     expect(missing.statusCode).toBe(404)
+  })
+})
+
+describe('serverMsgToSse', () => {
+  it('maps assistant_delta -> delta frame', () => {
+    expect(serverMsgToSse({ type: 'assistant_delta', chatId: 'c', text: 'hi' })).toBe(
+      'event: delta\ndata: {"text":"hi"}\n\n',
+    )
+  })
+  it('maps tool_call -> tool_call frame', () => {
+    expect(serverMsgToSse({ type: 'tool_call', chatId: 'c', id: 't1', name: 'Write', input: { a: 1 } })).toBe(
+      'event: tool_call\ndata: {"id":"t1","name":"Write","input":{"a":1}}\n\n',
+    )
+  })
+  it('maps turn_done -> done frame', () => {
+    expect(serverMsgToSse({ type: 'turn_done', chatId: 'c', usage: { outputTokens: 3 } })).toBe(
+      'event: done\ndata: {"usage":{"outputTokens":3}}\n\n',
+    )
+  })
+  it('maps error -> error frame', () => {
+    expect(serverMsgToSse({ type: 'error', chatId: 'c', message: 'boom' })).toBe(
+      'event: error\ndata: {"message":"boom"}\n\n',
+    )
+  })
+  it('returns null for interactive/housekeeping messages', () => {
+    expect(serverMsgToSse({ type: 'permission_request', chatId: 'c', requestId: 'r', name: 'Write', input: {} })).toBeNull()
+    expect(serverMsgToSse({ type: 'chat_list', chats: [] })).toBeNull()
+  })
+})
+
+describe('http-api turn endpoints (non-stream)', () => {
+  it('POST /api/chats/:id/messages (stream:false) returns { text, toolCalls, usage }', async () => {
+    const { app, hub, db } = makeApp()
+    const chat = hub.createChatFromApi({ title: 'T' })
+    // default policy = readonly -> FakeProvider's Write is denied -> no toolCalls
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/chats/${chat.id}/messages`,
+      payload: { text: 'hi', stream: false },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { text: string; toolCalls: unknown[]; usage: { outputTokens?: number } }
+    expect(body.text).toBe('Hello hi')
+    expect(body.toolCalls).toEqual([])
+    expect(body.usage).toEqual({ outputTokens: 3 })
+    // persisted
+    const msgs = await app.inject({ method: 'GET', url: `/api/chats/${chat.id}/messages` })
+    expect((msgs.json() as { messages: Array<{ role: string }> }).messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(db).toBeTruthy()
+  })
+
+  it('permission:auto allows the Write tool -> toolCalls populated', async () => {
+    const { app, hub } = makeApp()
+    const chat = hub.createChatFromApi({ title: 'T2' })
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/chats/${chat.id}/messages`,
+      payload: { text: 'hi', stream: false, permission: 'auto' },
+    })
+    const body = res.json() as { toolCalls: Array<{ name: string }> }
+    expect(body.toolCalls.map((t) => t.name)).toEqual(['Write'])
+  })
+
+  it('POST messages requires non-empty text (400) and a real chat (404)', async () => {
+    const { app, hub } = makeApp()
+    const chat = hub.createChatFromApi({ title: 'T3' })
+    const noText = await app.inject({ method: 'POST', url: `/api/chats/${chat.id}/messages`, payload: {} })
+    expect(noText.statusCode).toBe(400)
+    const ghost = await app.inject({ method: 'POST', url: '/api/chats/ghost/messages', payload: { text: 'hi' } })
+    expect(ghost.statusCode).toBe(404)
+  })
+
+  it('POST /api/query creates a chat and returns { chatId, text, toolCalls, usage }', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'POST', url: '/api/query', payload: { text: 'once', stream: false } })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { chatId: string; text: string; toolCalls: unknown[] }
+    expect(body.chatId).toBeTruthy()
+    expect(body.text).toBe('Hello once')
   })
 })
