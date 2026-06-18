@@ -50,3 +50,21 @@ export class InteractivePermissionResolver implements PermissionResolver {
     this.pending.clear()
   }
 }
+
+// Non-interactive resolver for native/compat API turns: decides tool permission from a
+// fixed policy instead of prompting a human. 'auto' allows everything; 'readonly' allows
+// only the read-only tool set and denies writes/commands. It emits no ServerMsg and parks
+// no promise — so it needs none of the interactive resolver's chatId/send/genId deps, and
+// no cancelAll/handleResponse (it is passed only as a per-turn resolver into runTurn, never
+// stored as ChatRuntime's lifecycle resolver).
+export type PermissionPolicy = 'readonly' | 'auto'
+
+export class PolicyPermissionResolver implements PermissionResolver {
+  constructor(private mode: PermissionPolicy) {}
+
+  async resolve(toolName: string, _input: unknown): Promise<PermissionDecision> {
+    if (this.mode === 'auto') return { behavior: 'allow' }
+    if (isReadOnlyTool(toolName)) return { behavior: 'allow' }
+    return { behavior: 'deny', message: `readonly policy denies tool ${toolName}` }
+  }
+}

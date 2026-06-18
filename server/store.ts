@@ -286,7 +286,7 @@ export function listMessages(db: DB, chatId: string): StoredMessage[] {
   const rows = db
     .prepare(
       `SELECT id, role, content, usage, created_at
-         FROM messages WHERE chat_id = ? ORDER BY created_at ASC`,
+         FROM messages WHERE chat_id = ? ORDER BY created_at ASC, rowid ASC`,
     )
     .all(chatId) as MessageDbRow[]
   return rows.flatMap((r) => {

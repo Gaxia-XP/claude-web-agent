@@ -74,6 +74,28 @@ describe('AnthropicApiProvider', () => {
     expect(result.text).toBe('partial')
   })
 
+  it('stops emitting deltas once ctx.signal is aborted mid-stream', async () => {
+    const controller = new AbortController()
+    async function* fake(): AsyncIterable<AnthropicStreamEvent> {
+      yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'one' } }
+      controller.abort() // abort BEFORE the next event is consumed
+      yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'two' } }
+    }
+    const p = new AnthropicApiProvider({ apiKey: 'sk', defaultModel: 'm', streamFn: () => fake() })
+    const deltas: string[] = []
+    const c: ProviderContext = {
+      onDelta: (t) => deltas.push(t),
+      onToolCall: () => {},
+      onToolResult: () => {},
+      permission: { resolve: async () => ({ behavior: 'allow' }) },
+      signal: controller.signal,
+    }
+    const result = await p.send({ userText: 'hi', history: userHistory }, c)
+    // the in-loop `if (ctx.signal.aborted) break` must drop 'two'
+    expect(deltas).toEqual(['one'])
+    expect(result.text).toBe('one')
+  })
+
   it('falls back to userText when history is empty', async () => {
     let captured: unknown
     async function* fake(): AsyncIterable<AnthropicStreamEvent> {
