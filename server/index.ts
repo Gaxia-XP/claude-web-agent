@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import Fastify from 'fastify'
 import { attachWebSocketServer } from './ws'
 import { ChatHub } from './hub'
+import { registerHttpApi } from './http-api'
 import { openDb } from './store'
 import { makeProvider } from './providers/index'
 import { pingMessage } from './health'
@@ -24,6 +25,7 @@ const hub = new ChatHub({
   now: Date.now,
 })
 
+registerHttpApi(app, { hub, db })
 attachWebSocketServer(app.server, hub)
 await app.listen({ port: PORT, host: '127.0.0.1' })
 app.log.info(`WebSocket listening on ws://127.0.0.1:${PORT}/ws`)
