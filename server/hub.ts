@@ -2,6 +2,7 @@ import {
   parseClientMsg,
   type ClientMsg,
   type ServerMsg,
+  type ChatMeta,
 } from '../shared/protocol'
 import {
   DEFAULT_CONNECTION_ID,
@@ -22,8 +23,9 @@ import {
 } from './store'
 import { ChatRuntime } from './chatRuntime'
 import { listDirs } from './fsbrowse'
-import type { Provider } from './providers/types'
+import type { Provider, TurnResult } from './providers/types'
 import type { ProviderConfig } from './providers/index'
+import type { PermissionResolver } from './permission'
 
 export type HubDeps = {
   db: DB
@@ -57,6 +59,50 @@ export class ChatHub {
       handle: (raw: string) => this.handle(raw, send),
       close: () => this.close(send),
     }
+  }
+
+  // ── Native HTTP API (M4) ───────────────────────────────────────────────────
+  // Create a chat from the native API. Mirrors the WS 'create_chat' route MINUS the
+  // per-connection subscribe (a REST caller has no persistent Send), and still broadcasts
+  // chat_list so WS sidebars update. Throws if the connectionId is unknown.
+  createChatFromApi(opts: { connectionId?: string; model?: string; cwd?: string; title?: string }): ChatMeta {
+    const id = this.deps.genId()
+    const now = this.deps.now()
+    const connectionId = opts.connectionId ?? DEFAULT_CONNECTION_ID
+    const conn = getConnection(this.deps.db, connectionId)
+    if (!conn) throw new Error('connection not found')
+    const chat = createChat(this.deps.db, {
+      id,
+      title: opts.title ?? 'New chat',
+      connectionId,
+      model: opts.model ?? conn.defaultModel,
+      cwd: opts.cwd,
+      now,
+    })
+    this.broadcastAll({ type: 'chat_list', chats: listChats(this.deps.db) })
+    return chat
+  }
+
+  // Enqueue a native-API turn on the SAME runtime the WS path uses, so the turn broadcasts
+  // to WS subscribers of this chat automatically. The caller supplies the per-turn permission
+  // resolver (PolicyPermissionResolver) and an optional per-turn event sink (SSE/non-stream).
+  // On a runtime-build failure (e.g. missing api key) it mirrors the WS user_message contract:
+  // chat-scoped error + turn_done to WS subscribers, then re-throws for the REST caller.
+  enqueueApiTurn(
+    chatId: string,
+    text: string,
+    opts: { resolver: PermissionResolver; onEvent?: (m: ServerMsg) => void },
+  ): Promise<TurnResult> {
+    let rt: ChatRuntime
+    try {
+      rt = this.getOrCreateRuntime(chatId)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.broadcast({ type: 'error', chatId, message })
+      this.broadcast({ type: 'turn_done', chatId })
+      throw err
+    }
+    return rt.enqueue(text, { resolver: opts.resolver, onEvent: opts.onEvent })
   }
 
   private broadcastConnections(): void {

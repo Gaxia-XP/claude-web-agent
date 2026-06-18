@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ServerMsg } from '../shared/protocol'
-import { isReadOnlyTool, InteractivePermissionResolver } from './permission'
+import { isReadOnlyTool, InteractivePermissionResolver, PolicyPermissionResolver } from './permission'
 
 describe('isReadOnlyTool', () => {
   it('treats Read/Glob/Grep as read-only', () => {
@@ -86,5 +86,30 @@ describe('InteractivePermissionResolver', () => {
     // existing behaviour: promises denied
     await expect(p1).resolves.toEqual({ behavior: 'deny', message: 'watchdog timeout' })
     await expect(p2).resolves.toEqual({ behavior: 'deny', message: 'watchdog timeout' })
+  })
+})
+
+describe('PolicyPermissionResolver', () => {
+  it("'auto' mode allows every tool", async () => {
+    const r = new PolicyPermissionResolver('auto')
+    expect(await r.resolve('Read', {})).toEqual({ behavior: 'allow' })
+    expect(await r.resolve('Write', { file_path: '/tmp/x' })).toEqual({ behavior: 'allow' })
+    expect(await r.resolve('Bash', { command: 'ls' })).toEqual({ behavior: 'allow' })
+  })
+
+  it("'readonly' mode allows the read-only tool set", async () => {
+    const r = new PolicyPermissionResolver('readonly')
+    for (const t of ['Read', 'Glob', 'Grep', 'NotebookRead', 'WebSearch', 'WebFetch', 'TodoWrite']) {
+      expect(await r.resolve(t, {})).toEqual({ behavior: 'allow' })
+    }
+  })
+
+  it("'readonly' mode denies write/run tools with a message", async () => {
+    const r = new PolicyPermissionResolver('readonly')
+    const write = await r.resolve('Write', { file_path: '/tmp/x' })
+    expect(write.behavior).toBe('deny')
+    if (write.behavior === 'deny') expect(write.message).toMatch(/readonly/i)
+    const bash = await r.resolve('Bash', { command: 'ls' })
+    expect(bash.behavior).toBe('deny')
   })
 })

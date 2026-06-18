@@ -55,9 +55,39 @@ Click **New Chat** to open the creation modal:
 
 The browser connects over WebSocket to a local Fastify server (`ws://127.0.0.1:8787/ws`). Each turn is routed through the appropriate provider based on the chat's connection. Streamed text arrives as `assistant_delta` messages; for `local-agent`, tool calls and permission requests also flow back to the UI in real time.
 
+## Native HTTP API (REST + SSE)
+
+The same chat engine is reachable over REST on the localhost listener (`http://127.0.0.1:8787`,
+proxied via Vite `/api` in dev). Turns sent here also broadcast to any WebSocket UI viewing the
+same chat (live-sync).
+
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| GET | `/api/connections` | — | `{ connections }` (no api_key) |
+| GET | `/api/chats` | — | `{ chats }` |
+| POST | `/api/chats` | `{ connectionId?, model?, cwd?, title? }` | `201 { chatId }` |
+| GET | `/api/chats/:id/messages` | — | `{ messages }` (404 if unknown) |
+| POST | `/api/chats/:id/messages` | `{ text, stream?, permission? }` | non-stream `{ text, toolCalls, usage }`; stream → SSE |
+| POST | `/api/query` | `{ text, connectionId?, model?, cwd?, stream?, permission? }` | one-off chat + turn |
+
+- `permission`: `readonly` (default — read-only tools auto-allowed, writes/commands denied) or
+  `auto` (all tools allowed). Applies to local-agent connections; chat-only providers ignore it.
+- SSE events: `delta` `{text}`, `tool_call` `{id,name,input}`, `tool_result` `{id,result}`,
+  `done` `{usage}`, `error` `{message}` (and a leading `chat` `{chatId}` for `/api/query`).
+- **Auth:** M4 binds localhost only and does NOT enforce a bearer token yet. LAN bind
+  (`0.0.0.0`) + `Authorization: Bearer <token>` arrive in M6 — do not expose this port to an
+  untrusted network until then.
+
+Example:
+```bash
+curl -s localhost:8787/api/connections
+CHAT=$(curl -s -XPOST localhost:8787/api/chats -H 'content-type: application/json' -d '{}' | jq -r .chatId)
+curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H 'content-type: application/json' -d '{"text":"hello"}'
+```
+
 ## Status
 
-**M3 — multi-provider (local-agent / anthropic-api / openai-compatible) + connections CRUD + Settings UI.** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 adds the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. See `docs/superpowers/specs/` for the full roadmap (M4–M6: native HTTP API, compat API, LAN/auth).
+**M4 — native HTTP API (REST + SSE).** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 adds the native HTTP REST + SSE surface (see "Native HTTP API" above). See `docs/superpowers/specs/` for the full roadmap (M5–M6: compat API, LAN/auth).
 
 ## Security
 
@@ -83,6 +113,7 @@ DB_PATH=/tmp/my-chats.db npm run dev
 npm test                           # unit suite (Vitest, environment node)
 npm run build:web                  # production build of the web app
 npx tsx scripts/e2e-openai.mjs    # openai-compatible e2e — no credentials required
+npx tsx scripts/e2e-rest.mjs      # native HTTP API (REST + SSE + live-sync) e2e — no credentials required
 npx tsx scripts/e2e-multichat.mjs # local-agent multi-chat + persistence + resume e2e (requires Claude login)
 ```
 

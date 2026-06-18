@@ -186,6 +186,16 @@ describe("messages", () => {
     expect(row.usage).toBeUndefined()
     expect("usage" in row).toBe(false)
   })
+
+  it("orders messages by created_at then rowid (stable for same-timestamp rows)", () => {
+    const db = freshDb()
+    createChat(db, { id: "c1", title: "t", connectionId: DEFAULT_CONNECTION_ID, model: "m", now: 1 })
+    // three messages sharing the SAME created_at — insertion order must be preserved
+    appendMessage(db, { chatId: "c1", id: "m1", role: "user", content: [{ type: "text", text: "1" }], createdAt: 100 })
+    appendMessage(db, { chatId: "c1", id: "m2", role: "assistant", content: [{ type: "text", text: "2" }], createdAt: 100 })
+    appendMessage(db, { chatId: "c1", id: "m3", role: "user", content: [{ type: "text", text: "3" }], createdAt: 100 })
+    expect(listMessages(db, "c1").map((m) => m.id)).toEqual(["m1", "m2", "m3"])
+  })
 })
 
 describe("listMessages corrupt row guard", () => {
