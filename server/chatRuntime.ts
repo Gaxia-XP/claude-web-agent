@@ -37,6 +37,9 @@ export interface EnqueueOptions {
 
 type QueueItem = {
   text: string
+  // The id of THIS turn's eagerly-persisted user row. Used by runOne to keep the replayed
+  // history ending on the current question even when other turns interleaved their user rows.
+  userMsgId: string
   resolver?: PermissionResolver
   onEvent?: (m: ServerMsg) => void
   settle: (result: TurnResult) => void
@@ -61,8 +64,11 @@ export class ChatRuntime {
   }
 
   // Returns a promise that resolves with the turn's TurnResult once the turn fully completes.
-  // NOTE: isIdle is only guaranteed true after this promise resolves (settle is deferred one
-  // microtask so drain() can mark the runtime idle first).
+  // NOTE: isIdle is only guaranteed true once THIS promise's await-continuation resumes — not
+  // when settle() runs. settle() fires one microtask after the turn, while drain is still
+  // running===true; resolving this promise then schedules the caller's continuation a further
+  // hop behind drain's loop continuation, which by then has set running=false. Full ordering is
+  // documented at the settle() call in runOne.
   enqueue(text: string, opts: EnqueueOptions = {}): Promise<TurnResult> {
     // Persist the user message IMMEDIATELY (eagerly) so it is durable even if the turn
     // later aborts or is interrupted before it runs. interrupt() clears only the queue.
@@ -78,7 +84,7 @@ export class ChatRuntime {
     const done = new Promise<TurnResult>((resolve) => {
       settle = resolve
     })
-    this.queue.push({ text, resolver: opts.resolver, onEvent: opts.onEvent, settle })
+    this.queue.push({ text, userMsgId: userMsg.id, resolver: opts.resolver, onEvent: opts.onEvent, settle })
     void this.drain()
     return done
   }
@@ -125,7 +131,18 @@ export class ChatRuntime {
     const userText = item.text
     const chat = getChat(this.deps.db, this.chatId)
     const sdkSessionId = getChatSdkSession(this.deps.db, this.chatId)
-    const history = listMessages(this.deps.db, this.chatId)
+    // The eager user-row persist (enqueue) can interleave THIS turn's user row before a prior
+    // turn's assistant row when WS + REST (or two clients) enqueue on one chat — yielding e.g.
+    // [u1, u2, a1] for turn#2. Stateless providers replay PURELY from history, so a prompt that
+    // ends on a1 buries the real question (historyToChatMessages merges the consecutive users).
+    // Drop this turn's own user row + any later still-queued turns' user rows, then re-append
+    // THIS turn's row last, so the replayed prompt always ends on the current question.
+    // (this.queue here holds only LATER turns — the current item was already shift()-ed by drain.)
+    const all = listMessages(this.deps.db, this.chatId)
+    const pendingUserIds = new Set(this.queue.map((q) => q.userMsgId))
+    const current = all.find((m) => m.id === item.userMsgId)
+    const history = all.filter((m) => m.id !== item.userMsgId && !pendingUserIds.has(m.id))
+    if (current) history.push(current)
 
     const abort = new AbortController()
     this.currentAbort = abort
@@ -216,8 +233,14 @@ export class ChatRuntime {
       if (this.currentAbort === abort) this.currentAbort = null
       // Settle the per-turn promise exactly once with the (possibly empty) result so
       // native-API callers awaiting the turn always resolve — even on dispose/error.
-      // Deferred by one microtask so drain's finally (running = false) completes first,
-      // allowing isIdle to be true when the caller's await continuation resumes.
+      // Microtask ordering (why the caller's await sees isIdle === true for a now-idle runtime):
+      //   M1 (this .then): item.settle(result) runs while drain is STILL running===true; resolving
+      //      the `done` promise here merely ENQUEUES the caller's await-continuation (M3).
+      //   M2: drain's `await runOne` continuation — was enqueued when runOne returned (before M1
+      //      resolved `done`), so it runs ahead of M3: loops, sees an empty queue, runs its
+      //      finally -> running=false.
+      //   M3: the caller's `await enqueue(...)` resumes — running is now false -> isIdle true.
+      // (If more turns are queued, M2 starts the next one and isIdle stays false — also correct.)
       void Promise.resolve().then(() => item.settle(result))
     }
   }

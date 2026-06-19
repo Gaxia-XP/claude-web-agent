@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import type { ServerMsg } from '../shared/protocol'
+import type { ServerMsg, StoredMessage } from '../shared/protocol'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
 import type { PermissionDecision } from './permission'
 import { openDb, createChat, listMessages, getChatSdkSession, setChatSdkSession, deleteChat, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
+import { historyToChatMessages } from './providers/messages'
 import { ChatRuntime, type RuntimeDeps } from './chatRuntime'
 
 // Sleep for `ms` real milliseconds (gives event loop time to fire timers).
@@ -386,6 +387,47 @@ describe('ChatRuntime', () => {
     expect(seen).toEqual(['Write'])
     // interactive path never emitted a permission_request
     expect(countType(sent, 'permission_request')).toBe(0)
+  })
+
+  it('(m4-e) #MAJOR interleaved replay: turn#2 history ends on its OWN user row (not a prior assistant)', async () => {
+    // Reproduces the WS+REST-on-one-chat interleave: enqueue() eager-persists user#2 BEFORE
+    // turn#1's assistant row, so a naive `listMessages` for turn#2 yields [u1, u2, a1] —
+    // historyToChatMessages then merges the consecutive users and the prompt ends on the
+    // PRIOR assistant (A1), burying Q2. The fix re-appends THIS turn's user row last so the
+    // replayed prompt always ends on the current question.
+    const histories: StoredMessage[][] = []
+    const holder: { release: (() => void) | undefined } = { release: undefined }
+    let call = 0
+    const recording: Provider = {
+      type: 'rec',
+      async send(params: TurnParams, ctx: ProviderContext): Promise<TurnResult> {
+        call++
+        histories.push(params.history ?? [])
+        if (call === 1) {
+          // turn#1 parks until released, so turn#2's user row persists before assistant#1
+          await new Promise<void>((r) => { holder.release = r })
+        }
+        ctx.onDelta('A' + call)
+        return { text: 'A' + call }
+      },
+    }
+    const { deps } = makeDeps({ provider: recording })
+    const rt = new ChatRuntime('c1', deps)
+
+    rt.enqueue('Q1', { resolver: allowAll })
+    await tick() // turn#1 starts and parks inside send()
+    rt.enqueue('Q2', { resolver: allowAll }) // user#2 persisted NOW, before assistant#1
+    await tick()
+    holder.release?.() // release turn#1 -> assistant#1 persists -> turn#2 runs
+    await tick(20)
+
+    expect(call).toBe(2)
+    // turn#1's replayed prompt ends on its own question
+    const mapped1 = historyToChatMessages(histories[0])
+    expect(mapped1[mapped1.length - 1]).toEqual({ role: 'user', content: 'Q1' })
+    // turn#2's replayed prompt ends on Q2 — NOT on assistant A1
+    const mapped2 = historyToChatMessages(histories[1])
+    expect(mapped2[mapped2.length - 1]).toEqual({ role: 'user', content: 'Q2' })
   })
 
   it('(m4-d) queued (unrun) turns settle with empty text on interrupt', async () => {

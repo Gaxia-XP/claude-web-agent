@@ -133,6 +133,34 @@ if (!q.chatId || q.text !== 'Hello rest') fail(`/api/query returned ${JSON.strin
 const conns = await (await fetch(`${api}/connections`)).json()
 if (conns.connections.some((c) => 'apiKey' in c)) fail('apiKey leaked in GET /api/connections')
 
+// 11) Build-failure stream still terminates with a `done` frame (FIX B).
+// Seed an anthropic-api connection with NO api key -> makeProvider throws when the turn runs
+// (getOrCreateRuntime build failure). The SSE stream must still emit a terminal `done` AFTER
+// the `error`, so a streaming client never hangs waiting for the stream to close.
+const noKeyConnId = randomUUID()
+createConnection(db, {
+  id: noKeyConnId,
+  type: 'anthropic-api',
+  name: 'e2e-rest-nokey',
+  defaultModel: 'claude-3-5-sonnet',
+  now: Date.now(),
+})
+const bfChatRes = await fetch(`${api}/chats`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ connectionId: noKeyConnId, model: 'claude-3-5-sonnet', title: 'bf' }),
+})
+if (bfChatRes.status !== 201) fail(`build-failure chat create -> ${bfChatRes.status}`)
+const { chatId: bfChatId } = await bfChatRes.json()
+const bfRes = await fetch(`${api}/chats/${bfChatId}/messages`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ text: 'hi', stream: true }),
+})
+const bfBody = await bfRes.text()
+if (!/event: error/.test(bfBody)) fail(`build-failure stream missing "error" event (raw: ${JSON.stringify(bfBody)})`)
+if (!/event: done/.test(bfBody)) fail(`build-failure stream missing terminal "done" event (raw: ${JSON.stringify(bfBody)})`)
+
 console.log('✅ native HTTP API e2e PASS — REST + SSE + live-sync + persistence + /api/query')
 ws.close()
 await app.close()
