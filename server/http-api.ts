@@ -56,10 +56,13 @@ async function runApiTurn(
   if (stream) {
     reply.hijack()
     const raw = reply.raw
-    // Writing to a destroyed ServerResponse (client disconnected mid-turn) emits an async
-    // 'error' event which, unhandled, would crash the process. Swallow it. The turn keeps
-    // running (persist + WS live-sync) — same as the WS surface, where a disconnect does
-    // not abort the turn. Per-turn cancellation is M6.
+    // No-op 'error' handler — REQUIRED, not decorative (do not remove). A client disconnect
+    // surfaces first on the underlying socket, but a raw.write() that passed the canWrite() check
+    // below can still emit an async stream 'error' (EPIPE / write-after-destroy) in the TOCTOU
+    // window before it flushes; an unhandled stream 'error' would crash the process. So canWrite()
+    // guards the common case and THIS handler additionally absorbs that race — it is exactly what
+    // fixed M4's dead-socket crash vector. The turn keeps running (persist + WS live-sync) — same
+    // as the WS surface, where a disconnect does not abort the turn. Per-turn cancellation is M6.
     raw.on('error', () => {})
     const canWrite = (): boolean => !raw.writableEnded && !raw.destroyed
     raw.writeHead(200, {
@@ -68,7 +71,12 @@ async function runApiTurn(
       connection: 'keep-alive',
     })
     if (replyChatId && canWrite()) raw.write(sseFrame('chat', { chatId: replyChatId }))
+    // Track whether the turn emitted its own terminal frame (turn_done -> `done`). Build-failure
+    // (enqueueApiTurn throws before any event) and queued-turn-interrupted (settles with no
+    // turn_done) paths never emit one, leaving a streaming client to hang on an unclosed stream.
+    let doneEmitted = false
     const onEvent = (m: ServerMsg): void => {
+      if (m.type === 'turn_done') doneEmitted = true
       if (!canWrite()) return
       const frame = serverMsgToSse(m)
       if (frame) raw.write(frame)
@@ -78,11 +86,23 @@ async function runApiTurn(
     } catch (err) {
       if (canWrite()) raw.write(sseFrame('error', { message: err instanceof Error ? err.message : String(err) }))
     }
+    // Guarantee EVERY SSE stream terminates with a `done` frame (after any `error`), so clients
+    // can rely on it as the end-of-turn signal regardless of build-failure / interrupt paths.
+    // Backpressure note: a stalled-but-alive reader buffers this turn's frames in the Node
+    // stream (bounded per turn, localhost) — explicit flow control / drain handling is M6.
+    if (!doneEmitted && canWrite()) raw.write(sseFrame('done', {}))
     if (canWrite()) raw.end()
     return reply
   }
 
   // Non-stream: collect tool calls + any error event, return JSON.
+  // KNOWN LIMITATION (M4, deferred): a queued turn cancelled by a concurrent WS interrupt
+  // settles with { text: '' } and emits no error event, so this returns 200
+  // { text: '', toolCalls: [], usage: undefined } — indistinguishable from a legitimately empty
+  // turn. Distinguishing the two needs a `cancelled` flag on settle -> 409/aborted. Narrow race;
+  // the no-hang guarantee holds and the user row is persisted either way. (The SSE stream path
+  // shares this ambiguity: an interrupted queued turn emits a terminal `done` with no `error`, so
+  // a streaming client likewise can't tell cancellation from an empty turn.)
   const toolCalls: ToolCall[] = []
   let errorMessage: string | undefined
   const onEvent = (m: ServerMsg): void => {
