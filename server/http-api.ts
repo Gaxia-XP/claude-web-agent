@@ -56,13 +56,13 @@ async function runApiTurn(
   if (stream) {
     reply.hijack()
     const raw = reply.raw
-    // Defensive no-op 'error' handler. On a mid-turn client disconnect the error actually
-    // surfaces on the underlying TCP socket (raw.socket), which Node's HTTP server self-guards;
-    // a raw (ServerResponse) 'error' is unlikely in practice. The load-bearing protection
-    // against writing to a dead stream is canWrite() below (writableEnded/destroyed) plus Node's
-    // own socket guard — this handler is belt-and-suspenders, not the primary guard. The turn
-    // keeps running (persist + WS live-sync) — same as the WS surface, where a disconnect does
-    // not abort the turn. Per-turn cancellation is M6.
+    // No-op 'error' handler — REQUIRED, not decorative (do not remove). A client disconnect
+    // surfaces first on the underlying socket, but a raw.write() that passed the canWrite() check
+    // below can still emit an async stream 'error' (EPIPE / write-after-destroy) in the TOCTOU
+    // window before it flushes; an unhandled stream 'error' would crash the process. So canWrite()
+    // guards the common case and THIS handler additionally absorbs that race — it is exactly what
+    // fixed M4's dead-socket crash vector. The turn keeps running (persist + WS live-sync) — same
+    // as the WS surface, where a disconnect does not abort the turn. Per-turn cancellation is M6.
     raw.on('error', () => {})
     const canWrite = (): boolean => !raw.writableEnded && !raw.destroyed
     raw.writeHead(200, {
@@ -100,7 +100,9 @@ async function runApiTurn(
   // settles with { text: '' } and emits no error event, so this returns 200
   // { text: '', toolCalls: [], usage: undefined } — indistinguishable from a legitimately empty
   // turn. Distinguishing the two needs a `cancelled` flag on settle -> 409/aborted. Narrow race;
-  // the no-hang guarantee holds and the user row is persisted either way.
+  // the no-hang guarantee holds and the user row is persisted either way. (The SSE stream path
+  // shares this ambiguity: an interrupted queued turn emits a terminal `done` with no `error`, so
+  // a streaming client likewise can't tell cancellation from an empty turn.)
   const toolCalls: ToolCall[] = []
   let errorMessage: string | undefined
   const onEvent = (m: ServerMsg): void => {
