@@ -21,9 +21,9 @@ import {
   deleteChat,
   type DB,
 } from './store'
-import { ChatRuntime } from './chatRuntime'
+import { ChatRuntime, type TurnOutcome } from './chatRuntime'
 import { listDirs } from './fsbrowse'
-import type { Provider, TurnResult } from './providers/types'
+import type { Provider } from './providers/types'
 import type { ProviderConfig } from './providers/index'
 import type { PermissionResolver } from './permission'
 
@@ -92,7 +92,7 @@ export class ChatHub {
     chatId: string,
     text: string,
     opts: { resolver: PermissionResolver; onEvent?: (m: ServerMsg) => void },
-  ): Promise<TurnResult> {
+  ): Promise<TurnOutcome> {
     let rt: ChatRuntime
     try {
       rt = this.getOrCreateRuntime(chatId)

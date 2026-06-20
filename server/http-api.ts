@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { ServerMsg, ToolCall } from '../shared/protocol'
-import type { TurnResult } from './providers/types'
+import type { TurnOutcome } from './chatRuntime'
 import type { ChatHub } from './hub'
 import { PolicyPermissionResolver, type PermissionPolicy } from './permission'
 import { listConnections, listChats, getChat, listMessages, type DB } from './store'
@@ -81,13 +81,20 @@ async function runApiTurn(
       const frame = serverMsgToSse(m)
       if (frame) raw.write(frame)
     }
+    let outcome: TurnOutcome | undefined
     try {
-      await hub.enqueueApiTurn(chatId, text, { resolver, onEvent })
+      outcome = await hub.enqueueApiTurn(chatId, text, { resolver, onEvent })
     } catch (err) {
       if (canWrite()) raw.write(sseFrame('error', { message: err instanceof Error ? err.message : String(err) }))
     }
+    // A queued turn cleared by a concurrent WS interrupt (or chat close) resolves with
+    // { cancelled: true } and emits NO events — surface an explicit `error` frame so a streaming
+    // client can tell cancellation apart from a normal turn (it otherwise sees only a bare `done`).
+    if (outcome?.cancelled && canWrite()) {
+      raw.write(sseFrame('error', { message: 'turn cancelled', code: 'aborted' }))
+    }
     // Guarantee EVERY SSE stream terminates with a `done` frame (after any `error`), so clients
-    // can rely on it as the end-of-turn signal regardless of build-failure / interrupt paths.
+    // can rely on it as the end-of-turn signal regardless of build-failure / interrupt / cancel paths.
     // Backpressure note: a stalled-but-alive reader buffers this turn's frames in the Node
     // stream (bounded per turn, localhost) — explicit flow control / drain handling is M6.
     if (!doneEmitted && canWrite()) raw.write(sseFrame('done', {}))
@@ -96,25 +103,27 @@ async function runApiTurn(
   }
 
   // Non-stream: collect tool calls + any error event, return JSON.
-  // KNOWN LIMITATION (M4, deferred): a queued turn cancelled by a concurrent WS interrupt
-  // settles with { text: '' } and emits no error event, so this returns 200
-  // { text: '', toolCalls: [], usage: undefined } — indistinguishable from a legitimately empty
-  // turn. Distinguishing the two needs a `cancelled` flag on settle -> 409/aborted. Narrow race;
-  // the no-hang guarantee holds and the user row is persisted either way. (The SSE stream path
-  // shares this ambiguity: an interrupted queued turn emits a terminal `done` with no `error`, so
-  // a streaming client likewise can't tell cancellation from an empty turn.)
+  // A queued turn cleared by a concurrent WS interrupt (or chat close) resolves with
+  // { cancelled: true } and no error event -> we return 409 (below). That distinguishes it from a
+  // legitimately empty turn (text: '' with cancelled absent -> a normal 200). The user row is
+  // persisted either way and the no-hang guarantee holds. (The SSE path signals the same case with
+  // an `error` frame before its terminal `done`.)
   const toolCalls: ToolCall[] = []
   let errorMessage: string | undefined
   const onEvent = (m: ServerMsg): void => {
     if (m.type === 'tool_call') toolCalls.push({ id: m.id, name: m.name, input: m.input })
     else if (m.type === 'error') errorMessage = m.message
   }
-  let result: TurnResult
+  let result: TurnOutcome
   try {
     result = await hub.enqueueApiTurn(chatId, text, { resolver, onEvent })
   } catch (err) {
     reply.code(500)
     return { error: err instanceof Error ? err.message : String(err) }
+  }
+  if (result.cancelled) {
+    reply.code(409)
+    return { ...(replyChatId ? { chatId: replyChatId } : {}), error: 'turn cancelled', code: 'aborted' }
   }
   if (errorMessage !== undefined) {
     reply.code(500)

@@ -35,6 +35,13 @@ export interface EnqueueOptions {
   onEvent?: (m: ServerMsg) => void
 }
 
+// What enqueue()'s per-turn promise resolves to. A turn that runs resolves with its TurnResult
+// (cancelled absent). A turn cleared from the queue by interrupt()/dispose() BEFORE it ran
+// resolves with { text: '', cancelled: true } — letting native-API callers tell a cancelled turn
+// apart from a legitimately empty one (HTTP 409 / SSE error frame) instead of a silent empty 200.
+// `cancelled` is a runtime-level signal, NOT a provider concept, so it stays off TurnResult.
+export type TurnOutcome = TurnResult & { cancelled?: boolean }
+
 type QueueItem = {
   text: string
   // The id of THIS turn's eagerly-persisted user row. Used by runOne to keep the replayed
@@ -42,7 +49,7 @@ type QueueItem = {
   userMsgId: string
   resolver?: PermissionResolver
   onEvent?: (m: ServerMsg) => void
-  settle: (result: TurnResult) => void
+  settle: (result: TurnOutcome) => void
 }
 
 export class ChatRuntime {
@@ -63,13 +70,14 @@ export class ChatRuntime {
     )
   }
 
-  // Returns a promise that resolves with the turn's TurnResult once the turn fully completes.
+  // Returns a promise that resolves with the turn's TurnOutcome once the turn fully completes
+  // (or, for a turn cleared from the queue before it ran, with { text:'', cancelled:true }).
   // NOTE: isIdle is only guaranteed true once THIS promise's await-continuation resumes — not
   // when settle() runs. settle() fires one microtask after the turn, while drain is still
   // running===true; resolving this promise then schedules the caller's continuation a further
   // hop behind drain's loop continuation, which by then has set running=false. Full ordering is
   // documented at the settle() call in runOne.
-  enqueue(text: string, opts: EnqueueOptions = {}): Promise<TurnResult> {
+  enqueue(text: string, opts: EnqueueOptions = {}): Promise<TurnOutcome> {
     // Persist the user message IMMEDIATELY (eagerly) so it is durable even if the turn
     // later aborts or is interrupted before it runs. interrupt() clears only the queue.
     const userMsg: StoredMessage & { chatId: string } = {
@@ -80,8 +88,8 @@ export class ChatRuntime {
       createdAt: this.deps.now(),
     }
     appendMessage(this.deps.db, userMsg)
-    let settle!: (result: TurnResult) => void
-    const done = new Promise<TurnResult>((resolve) => {
+    let settle!: (result: TurnOutcome) => void
+    const done = new Promise<TurnOutcome>((resolve) => {
       settle = resolve
     })
     this.queue.push({ text, userMsgId: userMsg.id, resolver: opts.resolver, onEvent: opts.onEvent, settle })
@@ -92,8 +100,9 @@ export class ChatRuntime {
   interrupt(): void {
     this.currentAbort?.abort()
     // #6b: clear pending (unrun) turns; settle their promises so API callers never hang.
-    // The persisted user rows are untouched.
-    for (const item of this.queue) item.settle({ text: '' })
+    // cancelled:true marks them as terminated-before-running (vs a turn that ran and produced
+    // empty output) so native-API callers can surface 409/aborted. Persisted user rows untouched.
+    for (const item of this.queue) item.settle({ text: '', cancelled: true })
     this.queue = []
     this.permission.cancelAll('interrupted by user')
   }
@@ -106,7 +115,8 @@ export class ChatRuntime {
     this.disposed = true
     this.currentAbort?.abort()
     this.permission.cancelAll('chat closed')
-    for (const item of this.queue) item.settle({ text: '' })
+    // Same as interrupt(): queued turns never ran -> cancelled:true (not an empty completion).
+    for (const item of this.queue) item.settle({ text: '', cancelled: true })
     this.queue = []
   }
 
