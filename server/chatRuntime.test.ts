@@ -430,7 +430,7 @@ describe('ChatRuntime', () => {
     expect(mapped2[mapped2.length - 1]).toEqual({ role: 'user', content: 'Q2' })
   })
 
-  it('(m4-d) queued (unrun) turns settle with empty text on interrupt', async () => {
+  it('(m4-d) queued (unrun) turn settles { text:"", cancelled:true } on interrupt; the running (aborted) turn is NOT flagged cancelled', async () => {
     // a provider that parks until released, so the SECOND turn stays queued
     const holder: { release: (() => void) | undefined } = { release: undefined }
     const parking = {
@@ -447,9 +447,34 @@ describe('ChatRuntime', () => {
     await tick()
     rt.interrupt() // aborts the running turn + clears the queued 'two'
     holder.release?.()
-    const r2 = await second // must NOT hang
-    expect(r2).toEqual({ text: '' })
-    await first // also settles (running turn aborted)
+    // QUEUED turn never ran: settles with an explicit cancelled flag so native-API callers
+    // can distinguish it from a legitimately empty turn (and it must NOT hang).
+    const r2 = await second
+    expect(r2).toEqual({ text: '', cancelled: true })
+    // RUNNING turn was aborted but reached its OWN settle path (runOne) -> not a queue-cancel.
+    const r1 = await first
+    expect(r1.cancelled).toBeFalsy()
     expect(rt.isIdle).toBe(true)
+  })
+
+  it('(m4-f) queued (unrun) turn settles { text:"", cancelled:true } on dispose', async () => {
+    const holder: { release: (() => void) | undefined } = { release: undefined }
+    const parking = {
+      type: 'park',
+      async send() {
+        await new Promise<void>((r) => { holder.release = r })
+        return { text: 'done' }
+      },
+    }
+    const { deps } = makeDeps({ provider: parking })
+    const rt = new ChatRuntime('c1', deps)
+    const first = rt.enqueue('one', { resolver: allowAll })
+    const second = rt.enqueue('two', { resolver: allowAll })
+    await tick()
+    rt.dispose() // disposes the running turn + clears the queued 'two'
+    holder.release?.()
+    const r2 = await second
+    expect(r2).toEqual({ text: '', cancelled: true })
+    await first // running turn settles too (dispose guard skips persist)
   })
 })

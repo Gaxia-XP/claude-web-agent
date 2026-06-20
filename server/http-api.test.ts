@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
-import { openDb, listChats } from './store'
+import { openDb, listChats, createChat, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
 import { registerHttpApi, serverMsgToSse } from './http-api'
@@ -149,5 +149,70 @@ describe('http-api turn endpoints (non-stream)', () => {
     const body = res.json() as { chatId: string; text: string; toolCalls: unknown[] }
     expect(body.chatId).toBeTruthy()
     expect(body.text).toBe('Hello once')
+  })
+})
+
+// A chat row + a hub whose enqueueApiTurn returns a fixed outcome — lets us drive runApiTurn's
+// cancelled-vs-empty mapping deterministically without racing a real concurrent interrupt.
+function makeAppWithEnqueue(
+  enqueueApiTurn: () => Promise<{ text: string; cancelled?: boolean }>,
+): { app: FastifyInstance } {
+  const db = openDb(':memory:')
+  createChat(db, { id: 'c1', title: 'T', connectionId: DEFAULT_CONNECTION_ID, model: 'sonnet', now: 1000 })
+  const hub = { enqueueApiTurn } as unknown as ChatHub
+  const app = Fastify()
+  registerHttpApi(app, { hub, db })
+  return { app }
+}
+
+describe('http-api stream (SSE) + cancelled-turn signalling', () => {
+  it('stream: a normal turn streams delta + terminal done frames (inject/hijack happy path)', async () => {
+    const { app, hub } = makeApp()
+    const chat = hub.createChatFromApi({ title: 'S' })
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/chats/${chat.id}/messages`,
+      payload: { text: 'hi', stream: true, permission: 'auto' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.body).toContain('event: delta')
+    expect(res.body).toContain('event: done')
+  })
+
+  it('non-stream: a cancelled queued turn returns 409 (not an ambiguous empty 200)', async () => {
+    const { app } = makeAppWithEnqueue(async () => ({ text: '', cancelled: true }))
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chats/c1/messages',
+      payload: { text: 'hi', stream: false },
+    })
+    expect(res.statusCode).toBe(409)
+    expect((res.json() as { error: string }).error).toMatch(/cancel/i)
+  })
+
+  it('stream: a cancelled queued turn emits an error frame BEFORE the terminal done', async () => {
+    const { app } = makeAppWithEnqueue(async () => ({ text: '', cancelled: true }))
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chats/c1/messages',
+      payload: { text: 'hi', stream: true },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.body
+    expect(body).toContain('event: error')
+    expect(body).toContain('event: done')
+    // error must precede the terminal done so a streaming client sees the signal first
+    expect(body.indexOf('event: error')).toBeLessThan(body.indexOf('event: done'))
+  })
+
+  it('non-stream: a legitimately empty (non-cancelled) turn still returns 200', async () => {
+    const { app } = makeAppWithEnqueue(async () => ({ text: '' }))
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chats/c1/messages',
+      payload: { text: 'hi', stream: false },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { text: string }).text).toBe('')
   })
 })
