@@ -4,6 +4,7 @@ import { openDb, listChats, createChat, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
 import { registerHttpApi, serverMsgToSse } from './http-api'
+import { PolicyPermissionResolver } from './permission'
 import type { ServerMsg } from '../shared/protocol'
 
 function makeApp(): { app: FastifyInstance; hub: ChatHub; db: ReturnType<typeof openDb> } {
@@ -177,6 +178,10 @@ describe('http-api stream (SSE) + cancelled-turn signalling', () => {
     expect(res.statusCode).toBe(200)
     expect(res.body).toContain('event: delta')
     expect(res.body).toContain('event: done')
+    // exactly ONE terminal done (regression guard for the doneEmitted double-done class) and NO
+    // error frame on a successful turn (guards a spurious cancelled/error over-fire on the happy path)
+    expect(res.body.match(/event: done/g)).toHaveLength(1)
+    expect(res.body).not.toContain('event: error')
   })
 
   it('non-stream: a cancelled queued turn returns 409 (not an ambiguous empty 200)', async () => {
@@ -214,5 +219,54 @@ describe('http-api stream (SSE) + cancelled-turn signalling', () => {
     })
     expect(res.statusCode).toBe(200)
     expect((res.json() as { text: string }).text).toBe('')
+  })
+
+  it('stream: a legitimately empty (non-cancelled) turn emits a terminal done and NO error frame', async () => {
+    // SSE counterpart of the non-stream-200 guard above: pins the stream over-trigger gate
+    // (`if (outcome?.cancelled ...)`) so a future narrowing cannot spuriously emit an error frame
+    // on a genuinely empty-but-completed turn.
+    const { app } = makeAppWithEnqueue(async () => ({ text: '' }))
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chats/c1/messages',
+      payload: { text: 'hi', stream: true },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.body).toContain('event: done')
+    expect(res.body).not.toContain('event: error')
+  })
+
+  it('integration: a REAL queued turn cleared by a concurrent interrupt resolves { cancelled:true } through hub.enqueueApiTurn', async () => {
+    // The makeAppWithEnqueue tests above pin the http MAPPING (cancelled -> 409 / SSE error) against a
+    // synthetic outcome. This pins the OTHER half end-to-end through the real ChatRuntime + hub: a
+    // parked turn#1 keeps the runtime busy so turn#2 stays QUEUED, then a concurrent WS interrupt
+    // clears it. enqueue() is synchronous, so turn#2 is queued the instant enqueueApiTurn returns
+    // (before the interrupt) -> race-free, no timers. The two halves meet at Promise<TurnOutcome>.
+    const holder: { release: (() => void) | undefined } = { release: undefined }
+    let started!: () => void
+    const startedP = new Promise<void>((r) => { started = r })
+    const parking = {
+      type: 'park',
+      async send() {
+        started() // turn#1 is now RUNNING (parked) -> runtime busy
+        await new Promise<void>((r) => { holder.release = r })
+        return { text: 'done' }
+      },
+    }
+    const db = openDb(':memory:')
+    let idN = 0
+    let nowN = 1000
+    const hub = new ChatHub({ db, makeProvider: () => parking, genId: () => `id-${++idN}`, now: () => ++nowN })
+    const chat = hub.createChatFromApi({ title: 'P' })
+    // turn#1 occupies the runtime via the WS surface and parks (deterministic: await startedP)
+    const conn = hub.addConnection(() => {})
+    conn.handle(JSON.stringify({ type: 'user_message', chatId: chat.id, text: 'one' }))
+    await startedP
+    // turn#2 enqueues behind the parked turn#1 -> stays QUEUED (enqueue is synchronous)
+    const second = hub.enqueueApiTurn(chat.id, 'two', { resolver: new PolicyPermissionResolver('auto') })
+    conn.handle(JSON.stringify({ type: 'interrupt', chatId: chat.id })) // clears the queued turn#2
+    holder.release?.() // release turn#1 so the runtime drains cleanly
+    const outcome = await second
+    expect(outcome).toEqual({ text: '', cancelled: true })
   })
 })
