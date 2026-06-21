@@ -36,7 +36,7 @@ export function registerOpenAiCompat(app: FastifyInstance, deps: CompatDeps): vo
       try {
         sse.write(`data: ${JSON.stringify(chunk({ role: 'assistant' }, null))}\n\n`) // first chunk announces the role
         const out = await executeCompatTurn({
-          ...resolved, messages: parsed.messages, signal: sse.signal,
+          ...resolved, messages: parsed.messages, signal: sse.signal, turnTimeoutMs: deps.turnTimeoutMs,
           onDelta: (t) => sse.write(`data: ${JSON.stringify(chunk({ content: t }, null))}\n\n`),
         })
         if (out.error) {
@@ -59,7 +59,7 @@ export function registerOpenAiCompat(app: FastifyInstance, deps: CompatDeps): vo
     req.raw.on('close', () => ac.abort()) // client disconnect -> abort the provider run
     let out
     try {
-      out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal })
+      out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal, turnTimeoutMs: deps.turnTimeoutMs })
     } finally {
       ac.abort() // abort on return (timeout/normal/error) so no detached provider run lingers
     }

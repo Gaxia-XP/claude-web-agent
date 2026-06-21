@@ -27,7 +27,7 @@ export function registerAnthropicCompat(app: FastifyInstance, deps: CompatDeps):
         frame('message_start', { type: 'message_start', message: { id: 'msg_compat', type: 'message', role: 'assistant', model: parsed.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } })
         frame('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
         const out = await executeCompatTurn({
-          ...resolved, messages: parsed.messages, signal: sse.signal,
+          ...resolved, messages: parsed.messages, signal: sse.signal, turnTimeoutMs: deps.turnTimeoutMs,
           onDelta: (t) => frame('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }),
         })
         frame('content_block_stop', { type: 'content_block_stop', index: 0 })
@@ -50,7 +50,7 @@ export function registerAnthropicCompat(app: FastifyInstance, deps: CompatDeps):
     req.raw.on('close', () => ac.abort()) // client disconnect -> abort the provider run
     let out
     try {
-      out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal })
+      out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal, turnTimeoutMs: deps.turnTimeoutMs })
     } finally {
       ac.abort() // abort on return (timeout/normal/error) so no detached provider run lingers
     }

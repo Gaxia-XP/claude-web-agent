@@ -117,4 +117,25 @@ describe('compat openai /v1/chat/completions', () => {
     expect(body).not.toContain('"finish_reason":"stop"') // must NOT masquerade as a normal completion
     expect(body.trimEnd().endsWith('data: [DONE]')).toBe(true)
   })
+
+  it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {
+    let sawAbort = false
+    const hang = {
+      type: 'hang',
+      async send(_p: unknown, ctx: { signal: AbortSignal }) {
+        await new Promise<void>((res) => ctx.signal.addEventListener('abort', () => { sawAbort = true; res() }))
+        return { text: '' }
+      },
+    }
+    const a = Fastify()
+    registerOpenAiCompat(a, { db: openDb(':memory:'), makeProvider: () => hang as never, turnTimeoutMs: 20 })
+    const res = await a.inject({
+      method: 'POST', url: '/v1/chat/completions',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: false },
+    })
+    // runTurn times out (20ms) -> 500; the route's finally{ac.abort()} then tears the hung provider
+    // down. Reverting fix D (dropping finally{ac.abort()}) leaves sawAbort false -> this test fails.
+    expect(res.statusCode).toBe(500)
+    expect(sawAbort).toBe(true)
+  })
 })

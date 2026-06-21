@@ -102,4 +102,23 @@ describe('compat anthropic /v1/messages', () => {
     // message_delta usage now carries input_tokens (echo provider reports inputTokens:2), not just output_tokens
     expect(res.body).toMatch(/"usage":\{"input_tokens":2,"output_tokens":3\}/)
   })
+
+  it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {
+    let sawAbort = false
+    const hang = {
+      type: 'hang',
+      async send(_p: unknown, ctx: { signal: AbortSignal }) {
+        await new Promise<void>((res) => ctx.signal.addEventListener('abort', () => { sawAbort = true; res() }))
+        return { text: '' }
+      },
+    }
+    const a = Fastify()
+    registerAnthropicCompat(a, { db: openDb(':memory:'), makeProvider: () => hang as never, turnTimeoutMs: 20 })
+    const res = await a.inject({
+      method: 'POST', url: '/v1/messages',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }] },
+    })
+    expect(res.statusCode).toBe(500)
+    expect(sawAbort).toBe(true) // reverting fix D's finally{ac.abort()} leaves this false
+  })
 })

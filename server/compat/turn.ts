@@ -7,7 +7,9 @@ import { runTurn } from '../agent'
 import { parseModelId, resolveConnectionByName, connectionToProviderConfig } from './models'
 
 export type CompatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
-export type CompatDeps = { db: DB; makeProvider: (cfg: ProviderConfig) => Provider }
+// turnTimeoutMs (optional) flows into runTurn so a gateway can bound a synchronous request and, on
+// timeout, the route's finally-abort tears the lingering provider run down. Defaults to runTurn's.
+export type CompatDeps = { db: DB; makeProvider: (cfg: ProviderConfig) => Provider; turnTimeoutMs?: number }
 
 // Carries the HTTP status the compat endpoints return for resolution failures.
 export class CompatError extends Error {
@@ -45,7 +47,7 @@ export function renderLocalAgentPrompt(messages: CompatMessage[]): string {
   const transcript = convo
     .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n\n')
-  return `You are continuing an ongoing conversation. The full transcript so far:\n\n${transcript}\n\nContinue the conversation by responding to the most recent User message.`
+  return `You are continuing an ongoing conversation. The full transcript so far:\n\n${transcript}\n\nContinue the conversation by responding to the most recent message.`
 }
 
 // Resolve provider + policy + model from a compat model id. Throws CompatError (404/400).
@@ -76,6 +78,7 @@ export async function executeCompatTurn(args: {
   messages: CompatMessage[]
   signal: AbortSignal
   onDelta?: (text: string) => void
+  turnTimeoutMs?: number
 }): Promise<{ text: string; usage?: Usage; error?: string }> {
   const params = compatMessagesToTurnParams(args.messages, args.model)
   if (args.provider.type === 'local-agent') {
@@ -94,6 +97,7 @@ export async function executeCompatTurn(args: {
     send,
     permission: resolver,
     signal: args.signal,
+    turnTimeoutMs: args.turnTimeoutMs,
   })
   return { text: result.text, usage: result.usage, error }
 }

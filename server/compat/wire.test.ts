@@ -1,6 +1,19 @@
 // server/compat/wire.test.ts
 import { describe, it, expect } from 'vitest'
-import { parseCompatBody } from './wire'
+import { EventEmitter } from 'node:events'
+import type { FastifyReply } from 'fastify'
+import { parseCompatBody, openSseStream } from './wire'
+
+// Minimal ServerResponse-like raw so openSseStream can be exercised without a real socket.
+function fakeReply(): { reply: FastifyReply; raw: EventEmitter & { writableEnded: boolean; destroyed: boolean; writeCount: number } } {
+  const raw = Object.assign(new EventEmitter(), {
+    writableEnded: false, destroyed: false, writeCount: 0,
+    writeHead(): void {},
+    write(): boolean { raw.writeCount++; return true },
+    end(): void { raw.writableEnded = true },
+  })
+  return { reply: { hijack(): void {}, raw } as unknown as FastifyReply, raw }
+}
 
 describe('compat/wire parseCompatBody', () => {
   it('parses a valid body (string content)', () => {
@@ -32,5 +45,30 @@ describe('compat/wire parseCompatBody', () => {
     expect(parseCompatBody({ model: 'm', messages: [{ role: 'tool', content: 'x' }] })).toBeNull() // bad role
     expect(parseCompatBody({ model: 'm', messages: [{ role: 'user' }] })).toBeNull() // no content
     expect(parseCompatBody(undefined)).toBeNull()
+  })
+})
+
+describe('compat/wire openSseStream', () => {
+  it('aborts the signal when the client connection closes (raw "close")', () => {
+    const { reply, raw } = fakeReply()
+    const sse = openSseStream(reply)
+    expect(sse.signal.aborted).toBe(false)
+    raw.emit('close')
+    expect(sse.signal.aborted).toBe(true) // removing the on('close')->abort guard (fix D) fails this
+  })
+
+  it('abort() flips the signal; end() makes canWrite() false so write() becomes a no-op', () => {
+    const { reply, raw } = fakeReply()
+    const sse = openSseStream(reply)
+    sse.write('a\n\n')
+    expect(sse.canWrite()).toBe(true)
+    sse.end()
+    expect(raw.writableEnded).toBe(true)
+    expect(sse.canWrite()).toBe(false)
+    const before = raw.writeCount
+    sse.write('b\n\n') // guarded by canWrite() -> no-op after end()
+    expect(raw.writeCount).toBe(before)
+    sse.abort()
+    expect(sse.signal.aborted).toBe(true)
   })
 })
