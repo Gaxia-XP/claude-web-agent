@@ -138,7 +138,7 @@ safeEqual(a: string | undefined, b: string): boolean             // timingSafeEq
 - ดู §5.2 (token subprotocol + `wsUrl` scheme + `classifyClose` + onAuthError)
 
 ### 8.4 `api.ts` (ใหม่ เล็ก)
-- `apiFetch(path, token, init?)` แนบ `Authorization: Bearer <token>`; 401 → callback onAuthError; ใช้ใน Login probe + Settings `/v1/models`
+- `apiFetch(path, token, init?): Promise<Response>` แนบ `Authorization: Bearer <token>` แล้วคืน Response (ไม่จัดการ 401 เอง — caller เช็ค `res.status`); ใช้ใน Login probe + Settings `/v1/models`
 
 ### 8.5 `Settings.tsx` (แก้ — panel "เชื่อมต่อจากที่อื่น / Harness")
 ตอบโจทย์ user (URL+key ไปเสียบ harness/โปรเจกต์อื่น) + spec §10:
