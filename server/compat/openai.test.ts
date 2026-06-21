@@ -39,6 +39,15 @@ function appEcho(): FastifyInstance {
   return a
 }
 
+// A provider whose send() throws — runTurn catches it, emits an error event, and returns {text:''},
+// so executeCompatTurn surfaces { error }. Lets us assert the error-path wire shape.
+const boom = { type: 'boom', async send() { throw new Error('upstream exploded') } }
+function appBoom(): FastifyInstance {
+  const a = Fastify()
+  registerOpenAiCompat(a, { db: openDb(':memory:'), makeProvider: () => boom as never })
+  return a
+}
+
 describe('compat openai /v1/chat/completions', () => {
   it('non-stream returns a chat.completion with the final text + usage', async () => {
     const res = await appEcho().inject({
@@ -77,5 +86,56 @@ describe('compat openai /v1/chat/completions', () => {
   it('missing messages -> 400', async () => {
     const res = await app().inject({ method: 'POST', url: '/v1/chat/completions', payload: { model: 'local/sonnet' } })
     expect(res.statusCode).toBe(400)
+  })
+
+  it('(B) a system-only body -> 400 (empty-input guard)', async () => {
+    const res = await app().inject({
+      method: 'POST', url: '/v1/chat/completions',
+      payload: { model: 'local/sonnet', messages: [{ role: 'system', content: 'sys' }] },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('(D) a non-stream provider runtime error -> 500', async () => {
+    const res = await appBoom().inject({
+      method: 'POST', url: '/v1/chat/completions',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: false },
+    })
+    expect(res.statusCode).toBe(500)
+    expect((res.json() as { error: { message: string } }).error.message).toMatch(/exploded/)
+  })
+
+  it('(C) a streaming provider error emits a terminal error frame, NOT a finish_reason:stop', async () => {
+    const res = await appBoom().inject({
+      method: 'POST', url: '/v1/chat/completions',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: true },
+    })
+    expect(res.statusCode).toBe(200) // headers already sent before the error
+    const body = res.body
+    expect(body).toContain('"error"')
+    expect(body).toContain('exploded')
+    expect(body).not.toContain('"finish_reason":"stop"') // must NOT masquerade as a normal completion
+    expect(body.trimEnd().endsWith('data: [DONE]')).toBe(true)
+  })
+
+  it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {
+    let sawAbort = false
+    const hang = {
+      type: 'hang',
+      async send(_p: unknown, ctx: { signal: AbortSignal }) {
+        await new Promise<void>((res) => ctx.signal.addEventListener('abort', () => { sawAbort = true; res() }))
+        return { text: '' }
+      },
+    }
+    const a = Fastify()
+    registerOpenAiCompat(a, { db: openDb(':memory:'), makeProvider: () => hang as never, turnTimeoutMs: 20 })
+    const res = await a.inject({
+      method: 'POST', url: '/v1/chat/completions',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: false },
+    })
+    // runTurn times out (20ms) -> 500; the route's finally{ac.abort()} then tears the hung provider
+    // down. Reverting fix D (dropping finally{ac.abort()}) leaves sawAbort false -> this test fails.
+    expect(res.statusCode).toBe(500)
+    expect(sawAbort).toBe(true)
   })
 })

@@ -7,7 +7,9 @@ import { runTurn } from '../agent'
 import { parseModelId, resolveConnectionByName, connectionToProviderConfig } from './models'
 
 export type CompatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
-export type CompatDeps = { db: DB; makeProvider: (cfg: ProviderConfig) => Provider }
+// turnTimeoutMs (optional) flows into runTurn so a gateway can bound a synchronous request and, on
+// timeout, the route's finally-abort tears the lingering provider run down. Defaults to runTurn's.
+export type CompatDeps = { db: DB; makeProvider: (cfg: ProviderConfig) => Provider; turnTimeoutMs?: number }
 
 // Carries the HTTP status the compat endpoints return for resolution failures.
 export class CompatError extends Error {
@@ -32,6 +34,20 @@ export function compatMessagesToTurnParams(messages: CompatMessage[], model: str
     createdAt: 0,
   }))
   return { userText: lastUser?.content ?? '', history, model }
+}
+
+// local-agent is stateless in the compat path (there is no SDK session to resume) AND
+// LocalAgentProvider ignores params.history — so a multi-turn '<conn>[-auto]/<model>' request would
+// otherwise see ONLY the last user message and lose all prior context. Fold the whole transcript into
+// one userText prompt so the agent has the conversation. A single-turn request renders to just that
+// message (no preamble), keeping the clean prompt; system messages are dropped (M5 limitation).
+export function renderLocalAgentPrompt(messages: CompatMessage[]): string {
+  const convo = messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+  if (convo.length <= 1) return convo[0]?.content ?? ''
+  const transcript = convo
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n\n')
+  return `You are continuing an ongoing conversation. The full transcript so far:\n\n${transcript}\n\nContinue the conversation by responding to the most recent message.`
 }
 
 // Resolve provider + policy + model from a compat model id. Throws CompatError (404/400).
@@ -62,8 +78,14 @@ export async function executeCompatTurn(args: {
   messages: CompatMessage[]
   signal: AbortSignal
   onDelta?: (text: string) => void
+  turnTimeoutMs?: number
 }): Promise<{ text: string; usage?: Usage; error?: string }> {
   const params = compatMessagesToTurnParams(args.messages, args.model)
+  if (args.provider.type === 'local-agent') {
+    // local-agent ignores params.history and has no session to resume here -> fold the transcript
+    // into userText so multi-turn context survives (single-turn is unchanged). See renderLocalAgentPrompt.
+    params.userText = renderLocalAgentPrompt(args.messages)
+  }
   const resolver = new PolicyPermissionResolver(args.policy)
   let error: string | undefined
   const send = (m: ServerMsg): void => {
@@ -75,6 +97,7 @@ export async function executeCompatTurn(args: {
     send,
     permission: resolver,
     signal: args.signal,
+    turnTimeoutMs: args.turnTimeoutMs,
   })
   return { text: result.text, usage: result.usage, error }
 }

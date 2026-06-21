@@ -18,6 +18,14 @@ function appEcho(): FastifyInstance {
   return a
 }
 
+// A provider whose send() throws — surfaced by executeCompatTurn as { error }.
+const boom = { type: 'boom', async send() { throw new Error('upstream exploded') } }
+function appBoom(): FastifyInstance {
+  const a = Fastify()
+  registerAnthropicCompat(a, { db: openDb(':memory:'), makeProvider: () => boom as never })
+  return a
+}
+
 describe('compat anthropic /v1/messages', () => {
   it('non-stream returns an Anthropic message object', async () => {
     const res = await appEcho().inject({
@@ -55,5 +63,62 @@ describe('compat anthropic /v1/messages', () => {
     const res = await a.inject({ method: 'POST', url: '/v1/messages', payload: { model: 'ghost/x', messages: [{ role: 'user', content: 'x' }] } })
     expect(res.statusCode).toBe(404)
     expect((res.json() as { type: string; error: { type: string } }).type).toBe('error')
+  })
+
+  it('(B) a system-only body -> 400 (empty-input guard)', async () => {
+    const res = await appEcho().inject({
+      method: 'POST', url: '/v1/messages',
+      payload: { model: 'local/sonnet', messages: [{ role: 'system', content: 'sys' }] },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('(D) a non-stream provider runtime error -> 500', async () => {
+    const res = await appBoom().inject({
+      method: 'POST', url: '/v1/messages',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }] },
+    })
+    expect(res.statusCode).toBe(500)
+    expect((res.json() as { type: string }).type).toBe('error')
+  })
+
+  it('(C) a streaming provider error emits an `error` event, NOT a normal end_turn terminal', async () => {
+    const res = await appBoom().inject({
+      method: 'POST', url: '/v1/messages',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: true },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.body
+    expect(body).toContain('event: error')
+    expect(body).toContain('exploded')
+    expect(body).not.toContain('event: message_stop') // failure must be distinguishable from success
+  })
+
+  it('(input_tokens) a successful stream surfaces input_tokens in the terminal message_delta', async () => {
+    const res = await appEcho().inject({
+      method: 'POST', url: '/v1/messages',
+      payload: { model: 'local-auto/sonnet', stream: true, messages: [{ role: 'user', content: 'there' }] },
+    })
+    // message_delta usage now carries input_tokens (echo provider reports inputTokens:2), not just output_tokens
+    expect(res.body).toMatch(/"usage":\{"input_tokens":2,"output_tokens":3\}/)
+  })
+
+  it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {
+    let sawAbort = false
+    const hang = {
+      type: 'hang',
+      async send(_p: unknown, ctx: { signal: AbortSignal }) {
+        await new Promise<void>((res) => ctx.signal.addEventListener('abort', () => { sawAbort = true; res() }))
+        return { text: '' }
+      },
+    }
+    const a = Fastify()
+    registerAnthropicCompat(a, { db: openDb(':memory:'), makeProvider: () => hang as never, turnTimeoutMs: 20 })
+    const res = await a.inject({
+      method: 'POST', url: '/v1/messages',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }] },
+    })
+    expect(res.statusCode).toBe(500)
+    expect(sawAbort).toBe(true) // reverting fix D's finally{ac.abort()} leaves this false
   })
 })

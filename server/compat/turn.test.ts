@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { openDb, createConnection } from '../store'
 import { FakeProvider } from '../providers/fake'
 import { makeProvider } from '../providers/index'
-import { compatMessagesToTurnParams, resolveCompatTurn, executeCompatTurn, CompatError } from './turn'
+import { compatMessagesToTurnParams, renderLocalAgentPrompt, resolveCompatTurn, executeCompatTurn, CompatError } from './turn'
 
 const ac = (): AbortSignal => new AbortController().signal
 
@@ -66,5 +66,50 @@ describe('compat/turn executeCompatTurn', () => {
     })
     expect(out.error).toMatch(/upstream down/)
     expect(out.text).toBe('')
+  })
+
+  it('(A) folds the multi-turn transcript into userText for a local-agent provider (no context loss)', async () => {
+    let captured = ''
+    const localCapture = { type: 'local-agent', async send(params: { userText: string }) { captured = params.userText; return { text: 'ok' } } }
+    await executeCompatTurn({
+      provider: localCapture as never, policy: 'auto', model: 'm',
+      messages: [{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }, { role: 'user', content: 'Q2' }], signal: ac(),
+    })
+    expect(captured).toContain('Q1') // was: only 'Q2' reached local-agent (all prior context lost)
+    expect(captured).toContain('A1')
+    expect(captured).toContain('Q2')
+  })
+
+  it('(A) single-turn local-agent gets the clean prompt (no preamble pollution)', async () => {
+    let captured = ''
+    const localCapture = { type: 'local-agent', async send(params: { userText: string }) { captured = params.userText; return { text: 'ok' } } }
+    await executeCompatTurn({ provider: localCapture as never, policy: 'auto', model: 'm', messages: [{ role: 'user', content: 'just this' }], signal: ac() })
+    expect(captured).toBe('just this')
+  })
+
+  it('(A) a non-local-agent provider is unchanged — userText stays the LAST user message (history carries the rest)', async () => {
+    let captured = ''
+    const apiCapture = { type: 'openai-compatible', async send(params: { userText: string }) { captured = params.userText; return { text: 'ok' } } }
+    await executeCompatTurn({
+      provider: apiCapture as never, policy: 'auto', model: 'm',
+      messages: [{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }, { role: 'user', content: 'Q2' }], signal: ac(),
+    })
+    expect(captured).toBe('Q2')
+  })
+})
+
+describe('compat/turn renderLocalAgentPrompt', () => {
+  it('single user message -> clean prompt, no preamble', () => {
+    expect(renderLocalAgentPrompt([{ role: 'user', content: 'hi' }])).toBe('hi')
+  })
+  it('multi-turn -> a transcript carrying every prior turn', () => {
+    const p = renderLocalAgentPrompt([{ role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }, { role: 'user', content: 'Q2' }])
+    expect(p).toContain('User: Q1')
+    expect(p).toContain('Assistant: A1')
+    expect(p).toContain('User: Q2')
+  })
+  it('drops system messages from the rendered transcript', () => {
+    const p = renderLocalAgentPrompt([{ role: 'system', content: 'SECRET' }, { role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' }, { role: 'user', content: 'Q2' }])
+    expect(p).not.toContain('SECRET')
   })
 })
