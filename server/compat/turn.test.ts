@@ -27,9 +27,11 @@ describe('compat/turn resolveCompatTurn', () => {
     try { resolveCompatTurn(deps, 'nope') } catch (e) { expect((e as CompatError).status).toBe(404) }
   })
   it('throws CompatError 404 for an unknown connection name', () => {
+    expect.assertions(1) // fail loudly if resolveCompatTurn ever stops throwing
     try { resolveCompatTurn(deps, 'ghost/x') } catch (e) { expect((e as CompatError).status).toBe(404) }
   })
   it('throws CompatError 400 when the provider cannot be built (anthropic-api with no key)', () => {
+    expect.assertions(1)
     const db = openDb(':memory:')
     createConnection(db, { id: 'c2', type: 'anthropic-api', name: 'claude', defaultModel: 'd', now: 1 }) // no apiKey
     try { resolveCompatTurn({ db, makeProvider }, 'claude/claude-opus-4-8') } catch (e) {

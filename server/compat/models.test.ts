@@ -1,6 +1,6 @@
 // server/compat/models.test.ts
 import { describe, it, expect } from 'vitest'
-import { openDb, createConnection, DEFAULT_CONNECTION_ID } from '../store'
+import { openDb, createConnection } from '../store'
 import { parseModelId, resolveConnectionByName, connectionToProviderConfig, listCompatModels } from './models'
 
 describe('compat/models parseModelId', () => {

@@ -73,4 +73,7 @@ assert(autoRes.choices[0].message.content.includes('[wrote]'), '-auto policy all
 assert(!roRes.choices[0].message.content.includes('[wrote]'), 'readonly policy denies Write')
 
 await app.close()
+// NOTE: no explicit process.exit(0) — after app.close() the better-sqlite3 in-memory DB keeps no
+// open handle, so the process exits naturally with code 0. Forcing process.exit(0) here races libuv
+// handle teardown on Windows (UV_HANDLE_CLOSING assertion). Failures exit(1) explicitly via assert().
 console.log('✅ compat API e2e PASS — /v1/models + openai + anthropic (stream + non-stream) + policy')
