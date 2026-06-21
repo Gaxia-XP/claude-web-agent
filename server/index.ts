@@ -5,6 +5,7 @@ import Fastify from 'fastify'
 import { attachWebSocketServer } from './ws'
 import { ChatHub } from './hub'
 import { registerHttpApi } from './http-api'
+import { registerCompatApi } from './compat/index'
 import { openDb } from './store'
 import { makeProvider } from './providers/index'
 import { pingMessage } from './health'
@@ -26,6 +27,7 @@ const hub = new ChatHub({
 })
 
 registerHttpApi(app, { hub, db })
+registerCompatApi(app, { db, makeProvider })
 attachWebSocketServer(app.server, hub)
 await app.listen({ port: PORT, host: '127.0.0.1' })
 app.log.info(`WebSocket listening on ws://127.0.0.1:${PORT}/ws`)
