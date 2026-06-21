@@ -41,7 +41,7 @@ function reducer(state: AppState, action: Action): AppState {
   }
 }
 
-export function App() {
+export function App({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [state, dispatch] = useReducer(reducer, initialAppState)
   const [status, setStatus] = useState<WsStatus>('connecting')
   const [page, setPage] = useState<'chat' | 'settings'>('chat')
@@ -61,10 +61,14 @@ export function App() {
           client.send({ type: 'subscribe', chatId: activeChatRef.current })
         }
       },
+      token,
+      // WS auth-fail shares the in-app return path with the Logout button:
+      // onLogout (from main.tsx Root) clears the token and remounts Login.
+      onAuthError: onLogout,
     })
     clientRef.current = client
     return () => client.close()
-  }, [])
+  }, [token, onLogout])
 
   const activeId = state.activeChatId
   const view = activeId ? state.views[activeId] : undefined
