@@ -23,12 +23,34 @@ export interface BuildAppDeps {
   webDist?: string
 }
 
+// Decode a raw request URL path once, for use in the auth guard. Returns the decoded path
+// on success. Returns null if the path contains malformed percent-encoding (decodeURIComponent
+// throws) OR if a literal '%' survives the decode (which indicates double-encoding).
+// Both null cases must be treated as GUARDED (deny-by-default).
+function decodePath(rawUrl: string): string | null {
+  const raw = rawUrl.split('?')[0]
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    // Malformed encoding (e.g. /api/%xx) — treat as guarded
+    return null
+  }
+  // A surviving '%' means double-encoding; treat as guarded
+  if (decoded.includes('%')) return null
+  return decoded
+}
+
 // §4: a request is allowlisted (token NOT required) when it is GET /api/health, or any path that
 // is neither an /api/* call nor a /v1/* call (i.e. static SPA assets / index.html). Everything else
 // is guarded. Bare /api and /v1 (no trailing slash) are also guarded so a future bare-path route
 // cannot silently bypass the auth boundary.
+// SECURITY: we decode the path before testing so percent-encoded bypasses (e.g. /%61pi/chats for
+// /api/chats) are blocked. A null decoded path (malformed or double-encoded) is treated as guarded.
 function isAllowlisted(req: FastifyRequest): boolean {
-  const path = req.url.split('?')[0]
+  const path = decodePath(req.url)
+  // null = malformed/double-encoded — deny
+  if (path === null) return false
   if (req.method === 'GET' && path === '/api/health') return true
   if (path === '/api' || path.startsWith('/api/')) return false
   if (path === '/v1' || path.startsWith('/v1/')) return false
@@ -38,8 +60,10 @@ function isAllowlisted(req: FastifyRequest): boolean {
 // §4: send the per-surface hand-rolled 401 body. We do NOT reuse the compat openaiError/anthropicError
 // helpers — they are file-private AND map non-404/400 statuses to 'api_error', whereas the contract
 // requires 'authentication_error' here. Always advertise the scheme via WWW-Authenticate: Bearer.
+// Uses the DECODED path so an encoded /v1/messages still yields the Anthropic-shaped 401.
 function sendUnauthorized(req: FastifyRequest, reply: FastifyReply): void {
-  const path = req.url.split('?')[0]
+  // Fall back to the raw path-only strip if decoding fails (caller already decided to deny)
+  const path = decodePath(req.url) ?? req.url.split('?')[0]
   const message = 'missing or invalid token'
   reply.code(401).header('WWW-Authenticate', 'Bearer')
   if (path === '/v1/messages') {
@@ -77,8 +101,17 @@ export function buildApp(deps: BuildAppDeps): { app: FastifyInstance; wss: WebSo
     const indexHtml = join(webDist, 'index.html')
     // SPA fallback: any GET that isn't an API/WS path serves index.html so client-side routing works.
     app.setNotFoundHandler((req, reply) => {
-      const path = req.url.split('?')[0]
-      const isApi = path === '/api' || path.startsWith('/api/') || path === '/v1' || path.startsWith('/v1/') || path === '/ws'
+      // Use the decoded path so encoded /api or /v1 prefixes are not served as SPA HTML.
+      // A null decoded path (malformed/double-encoded) is treated as an API path (deny SPA).
+      const decoded = decodePath(req.url)
+      const path = decoded ?? req.url.split('?')[0]
+      const isApi =
+        decoded === null ||
+        path === '/api' ||
+        path.startsWith('/api/') ||
+        path === '/v1' ||
+        path.startsWith('/v1/') ||
+        path === '/ws'
       if (req.method === 'GET' && !isApi && existsSync(indexHtml)) {
         return reply.type('text/html').sendFile('index.html')
       }

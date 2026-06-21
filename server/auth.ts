@@ -12,8 +12,10 @@ export function loadOrCreateToken(tokenPath: string): string {
   }
   const token = randomBytes(32).toString('base64url')
   mkdirSync(dirname(tokenPath), { recursive: true })
-  writeFileSync(tokenPath, token, 'utf8')
-  // Best-effort owner-only perms; a no-op on Windows filesystems.
+  // Create with owner-only mode (0o600) in one call — eliminates the world-readable window
+  // that existed between the old writeFileSync (defaulting to 0o666) and the subsequent chmod.
+  writeFileSync(tokenPath, token, { encoding: 'utf8', mode: 0o600 })
+  // Best-effort chmod on any pre-existing file or when the platform ignores mode on create.
   try {
     chmodSync(tokenPath, 0o600)
   } catch {
