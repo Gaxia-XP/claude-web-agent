@@ -8,9 +8,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import Fastify from 'fastify'
 import { WebSocket } from 'ws'
-import { attachWebSocketServer } from '../server/ws'
+import { buildApp } from '../server/app'
 import { ChatHub } from '../server/hub'
 import { openDb, listMessages } from '../server/store'
 import { makeProvider } from '../server/providers/index'
@@ -37,17 +36,23 @@ await new Promise((r) => fake.listen(0, r))
 const fakePort = fake.address().port
 const baseUrl = `http://127.0.0.1:${fakePort}/v1`
 
-// 2) Backend with a temp DB.
+// 2) Backend with a temp DB, booted through the real auth-guarded stack via buildApp.
+const TOKEN = 'e2e-token'
 const dbPath = join(mkdtempSync(join(tmpdir(), 'cwa-e2e-')), 'chats.db')
 const db = openDb(dbPath)
-const app = Fastify()
 const hub = new ChatHub({ db, makeProvider, genId: randomUUID, now: Date.now })
-attachWebSocketServer(app.server, hub)
+const { app } = buildApp({ db, hub, makeProvider, token: TOKEN })
 await app.listen({ port: 0, host: '127.0.0.1' })
 const port = app.server.address().port
 
+// 2a) Auth gate: guarded /api/* with no token -> 401; with token -> 200.
+const noTokRes = await fetch(`http://127.0.0.1:${port}/api/connections`)
+if (noTokRes.status !== 401) fail(`unauthenticated GET /api/connections -> ${noTokRes.status} (want 401)`)
+const okTokRes = await fetch(`http://127.0.0.1:${port}/api/connections`, { headers: { authorization: `Bearer ${TOKEN}` } })
+if (okTokRes.status !== 200) fail(`authenticated GET /api/connections -> ${okTokRes.status} (want 200)`)
+
 // 3) Drive over a real WebSocket.
-const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ['bearer', TOKEN])
 const sent = []
 let connId
 let chatId

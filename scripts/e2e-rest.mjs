@@ -9,10 +9,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import Fastify from 'fastify'
 import { WebSocket } from 'ws'
-import { attachWebSocketServer } from '../server/ws'
-import { registerHttpApi } from '../server/http-api'
+import { buildApp } from '../server/app'
 import { ChatHub } from '../server/hub'
 import { openDb, listMessages, createConnection } from '../server/store'
 import { makeProvider } from '../server/providers/index'
@@ -37,16 +35,24 @@ const fake = http.createServer((req, res) => {
 await new Promise((r) => fake.listen(0, r))
 const baseUrl = `http://127.0.0.1:${fake.address().port}/v1`
 
-// 2) Backend: Fastify + REST API + WS, temp DB, seeded openai-compatible connection.
+// 2) Backend: real auth-guarded stack via buildApp, temp DB, seeded openai-compatible connection.
+const TOKEN = 'e2e-token'
+const AUTH = { authorization: `Bearer ${TOKEN}` }
 const dbPath = join(mkdtempSync(join(tmpdir(), 'cwa-e2e-rest-')), 'chats.db')
 const db = openDb(dbPath)
-const app = Fastify()
 const hub = new ChatHub({ db, makeProvider, genId: randomUUID, now: Date.now })
-registerHttpApi(app, { hub, db })
-attachWebSocketServer(app.server, hub)
+const { app } = buildApp({ db, hub, makeProvider, token: TOKEN })
 await app.listen({ port: 0, host: '127.0.0.1' })
 const port = app.server.address().port
 const api = `http://127.0.0.1:${port}/api`
+
+// 2a) Negative + positive auth gate: guarded /api/* with no token -> 401; with token -> 200.
+const noTokRes = await fetch(`${api}/connections`)
+if (noTokRes.status !== 401) fail(`unauthenticated GET /api/connections -> ${noTokRes.status} (want 401)`)
+const noTokBody = await noTokRes.json()
+if (noTokBody.error !== 'unauthorized') fail(`401 body was ${JSON.stringify(noTokBody)} (want {error:'unauthorized'})`)
+const okTokRes = await fetch(`${api}/connections`, { headers: AUTH })
+if (okTokRes.status !== 200) fail(`authenticated GET /api/connections -> ${okTokRes.status} (want 200)`)
 
 const connId = randomUUID()
 createConnection(db, {
@@ -60,7 +66,7 @@ createConnection(db, {
 })
 
 // 3) A WS subscriber to prove live-sync of REST-originated turns.
-const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ['bearer', TOKEN])
 const wsMsgs = []
 ws.on('message', (raw) => wsMsgs.push(JSON.parse(raw.toString())))
 await new Promise((resolve) => ws.on('open', resolve))
@@ -68,7 +74,7 @@ await new Promise((resolve) => ws.on('open', resolve))
 // 4) Create a chat over REST.
 const createRes = await fetch(`${api}/chats`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { ...AUTH, 'content-type': 'application/json' },
   body: JSON.stringify({ connectionId: connId, model: 'fake-model', title: 'rest' }),
 })
 if (createRes.status !== 201) fail(`POST /api/chats -> ${createRes.status}`)
@@ -82,7 +88,7 @@ await new Promise((r) => setTimeout(r, 50))
 // 5) Non-stream message.
 const nsRes = await fetch(`${api}/chats/${chatId}/messages`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { ...AUTH, 'content-type': 'application/json' },
   body: JSON.stringify({ text: 'hi', stream: false }),
 })
 if (!nsRes.ok) fail(`non-stream status ${nsRes.status}`)
@@ -92,7 +98,7 @@ if (ns.text !== 'Hello rest') fail(`non-stream text was ${JSON.stringify(ns)}`)
 // 6) Streaming (SSE) message.
 const sseRes = await fetch(`${api}/chats/${chatId}/messages`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { ...AUTH, 'content-type': 'application/json' },
   body: JSON.stringify({ text: 'again', stream: true }),
 })
 if (!sseRes.ok) fail(`SSE status ${sseRes.status}`)
@@ -123,14 +129,14 @@ if (roles !== 'user,assistant,user,assistant') fail(`persisted roles were ${role
 // 9) /api/query one-off.
 const qRes = await fetch(`${api}/query`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { ...AUTH, 'content-type': 'application/json' },
   body: JSON.stringify({ connectionId: connId, model: 'fake-model', text: 'once', stream: false }),
 })
 const q = await qRes.json()
 if (!q.chatId || q.text !== 'Hello rest') fail(`/api/query returned ${JSON.stringify(q)}`)
 
 // 10) GET /api/connections never leaks api_key.
-const conns = await (await fetch(`${api}/connections`)).json()
+const conns = await (await fetch(`${api}/connections`, { headers: AUTH })).json()
 if (conns.connections.some((c) => 'apiKey' in c)) fail('apiKey leaked in GET /api/connections')
 
 // 11) Build-failure stream still terminates with a `done` frame (FIX B).
@@ -147,14 +153,14 @@ createConnection(db, {
 })
 const bfChatRes = await fetch(`${api}/chats`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { ...AUTH, 'content-type': 'application/json' },
   body: JSON.stringify({ connectionId: noKeyConnId, model: 'claude-3-5-sonnet', title: 'bf' }),
 })
 if (bfChatRes.status !== 201) fail(`build-failure chat create -> ${bfChatRes.status}`)
 const { chatId: bfChatId } = await bfChatRes.json()
 const bfRes = await fetch(`${api}/chats/${bfChatId}/messages`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { ...AUTH, 'content-type': 'application/json' },
   body: JSON.stringify({ text: 'hi', stream: true }),
 })
 const bfBody = await bfRes.text()
