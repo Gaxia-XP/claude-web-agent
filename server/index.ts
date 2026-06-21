@@ -14,10 +14,12 @@ const PORT = Number(process.env.PORT ?? 8787)
 const HOST = process.env.HOST ?? '0.0.0.0'
 const DB_PATH = process.env.DB_PATH ?? 'data/chats.db'
 const TOKEN_PATH = process.env.TOKEN_PATH ?? join(dirname(DB_PATH), '.token')
-// undefined -> ChatHub/compat fall back to their built-in default timeout
-const TURN_TIMEOUT_MS = process.env.TURN_TIMEOUT_MS
-  ? Number(process.env.TURN_TIMEOUT_MS)
-  : undefined
+// Guard against non-numeric / non-finite / non-positive values — those must fall back to undefined
+// so ChatHub/compat use their built-in default timeout rather than NaN (which would instant-fire
+// the watchdog on every turn).
+const _ttl = Number(process.env.TURN_TIMEOUT_MS)
+const TURN_TIMEOUT_MS =
+  process.env.TURN_TIMEOUT_MS && Number.isFinite(_ttl) && _ttl > 0 ? _ttl : undefined
 
 mkdirSync(dirname(DB_PATH), { recursive: true })
 const db = openDb(DB_PATH)
