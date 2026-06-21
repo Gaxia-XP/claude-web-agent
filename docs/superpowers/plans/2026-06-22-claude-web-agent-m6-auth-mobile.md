@@ -1394,7 +1394,7 @@ Expected: previous full-suite total + (net change for ws.test.ts: it had 2 tests
 - Modify: web/src/main.tsx (whole file rewritten — lines 1-11)
 - Modify: web/src/App.tsx (signature line 44; createWsClient useEffect lines 55-67)
 - Test: web/src/api.test.ts (new)
-- Modify: package.json (add `qrcode` dep + `@types/qrcode` devDep — installed now so T10's Settings import resolves; this task is where whole-web tsc must go green)
+- (deps note) `qrcode` + `@types/qrcode` were already added + installed in Task 1; this task does NOT modify package.json. This is the task where whole-web tsc goes green.
 
 **Interfaces:**
 - Consumes (from T6/T7): `bootstrapToken`, `clearToken`, `setToken` from `./auth`; `createWsClient` `{ token, onAuthError }` from `./ws`
@@ -1403,10 +1403,10 @@ Expected: previous full-suite total + (net change for ws.test.ts: it had 2 tests
   - `Login` component, prop `{ onAuthed: (token: string) => void }` (relied on by main.tsx)
   - `App` FINAL signature `{ token: string; onLogout: () => void }` (relied on by main.tsx; extended-not-changed by T9/T10)
 
-- [ ] **Step 1: Install qrcode deps (needed before whole-web tsc, used by T10)**
+- [ ] **Step 1: Verify qrcode deps are present (installed in Task 1 — do NOT reinstall)**
 
-Run: `npm i qrcode@^1.5.4 ; npm i -D @types/qrcode@^1.5.5`
-Expected: `package.json` gains `"qrcode"` under dependencies and `"@types/qrcode"` under devDependencies; `package-lock.json` updated.
+Run: `node -p "require('qrcode/package.json').version"` then `node -p "require('@types/qrcode/package.json').version"`
+Expected: both print a version (qrcode `1.x`, `@types/qrcode` `1.x`) — added + installed in Task 1. If either is missing, Task 1 was skipped; complete Task 1's deps first. This task does NOT modify package.json.
 
 - [ ] **Step 2: Create web/src/api.ts**
 
@@ -1652,7 +1652,7 @@ Run: `npm test`
 Expected: previous full-suite total + 2 new tests (api.test.ts); 0 failures.
 
 - [ ] **Step last: Commit**
-`git add web/src/api.ts web/src/api.test.ts web/src/components/Login.tsx web/src/main.tsx web/src/App.tsx package.json package-lock.json ; git commit -m 'feat(web-auth): apiFetch + Login gate + token-aware App/Root wiring (T8)'`
+`git add web/src/api.ts web/src/api.test.ts web/src/components/Login.tsx web/src/main.tsx web/src/App.tsx ; git commit -m 'feat(web-auth): apiFetch + Login gate + token-aware App/Root wiring (T8)'`
 
 ---
 
