@@ -3,19 +3,36 @@ import type { ClientMsg, ServerMsg } from '@shared/protocol'
 export type WsStatus = 'connecting' | 'open' | 'closed'
 
 // Pure, testable. NEVER hardcode the dev port (#5) — derive everything from host.
-export function wsUrl(host: string): string {
-  return 'ws://' + host + '/ws'
+// Scheme follows the page protocol so an https tunnel uses wss (no mixed-content).
+export function wsUrl(host: string, protocol: string): string {
+  return (protocol === 'https:' ? 'wss://' : 'ws://') + host + '/ws'
+}
+
+// Pure auth-fail heuristic. The browser WebSocket API does not surface the
+// handshake 401 status, so we infer it: a socket that closes WITHOUT ever
+// opening, twice in a row, is treated as an auth failure (bad/expired token).
+// A socket that did open (everOpened) is just a network blip -> keep reconnecting.
+export function classifyClose(s: {
+  everOpened: boolean
+  consecutiveFailedConnects: number
+}): 'reconnect' | 'authfail' {
+  if (!s.everOpened && s.consecutiveFailedConnects >= 2) return 'authfail'
+  return 'reconnect'
 }
 
 export function createWsClient(opts: {
   onMessage: (m: ServerMsg) => void
   onStatus?: (s: WsStatus) => void
+  token: string
+  onAuthError?: () => void
 }): { send: (m: ClientMsg) => void; close: () => void } {
-  const { onMessage, onStatus } = opts
-  const url = wsUrl(location.host)
+  const { onMessage, onStatus, token, onAuthError } = opts
+  const url = wsUrl(location.host, location.protocol)
 
   let ws: WebSocket
   let closedByUser = false
+  let everOpened = false
+  let consecutiveFailedConnects = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   const queue: string[] = []
 
@@ -25,9 +42,12 @@ export function createWsClient(opts: {
 
   const connect = () => {
     status('connecting')
-    ws = new WebSocket(url)
+    // Bearer token rides in the subprotocol so it never appears in the URL/logs.
+    ws = new WebSocket(url, ['bearer', token])
 
     ws.onopen = () => {
+      everOpened = true
+      consecutiveFailedConnects = 0
       status('open')
       for (const q of queue) ws.send(q)
       queue.length = 0
@@ -48,7 +68,15 @@ export function createWsClient(opts: {
     ws.onclose = () => {
       status('closed')
       if (closedByUser) return
-      // Single auto-reconnect attempt after a short delay (unexpected close only).
+      // Count a close that never reached onopen as a failed connect attempt.
+      if (!everOpened) consecutiveFailedConnects += 1
+      if (classifyClose({ everOpened, consecutiveFailedConnects }) === 'authfail') {
+        // Bad/expired token: stop the (previously unbounded) reconnect loop and
+        // hand control back to the app (-> clear token, show Login).
+        if (onAuthError) onAuthError()
+        return
+      }
+      // Otherwise reconnect after a short delay.
       if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
       reconnectTimer = setTimeout(() => {
         reconnectTimer = undefined

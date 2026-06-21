@@ -2,6 +2,71 @@
 
 Local web app for chatting with Claude across multiple providers — full agent mode (local-agent), Anthropic API (stateless chat), or any OpenAI-compatible endpoint (OpenRouter, Ollama, etc.).
 
+## Security / Run (LAN + auth)
+
+The server binds **`0.0.0.0`** by default so you can reach it from other devices on your LAN
+(e.g. your phone). All `/api/*` (except `GET /api/health`) and all `/v1/*` routes require a
+**bearer token**; static files (the SPA) are served without auth.
+
+### The token
+
+On first start the server generates a 43-char URL-safe token and writes it to **`data/.token`**
+(gitignored). The same token is reused on every later start. The startup banner prints the token,
+the LAN URLs, and a **QR code** that encodes `http://<lan-ip>:<port>/#token=<token>`.
+
+Connect a phone by either:
+- **Scan the QR code** with the phone camera — it opens the app and auto-logs-in via the URL
+  hash (`#token=…`), which is consumed client-side and never sent to the server (so the token
+  stays out of server logs).
+- **Open `http://<lan-ip>:<port>` and paste the token** into the Login screen.
+
+### Environment variables
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `HOST` | `0.0.0.0` | Bind address. Set `127.0.0.1` to restrict to localhost. |
+| `PORT` | `8787` | Listen port. |
+| `TOKEN_PATH` | `<dir of DB_PATH>/.token` | Where the bearer token is stored/read. |
+| `DB_PATH` | `data/chats.db` | SQLite database file (`:memory:` for ephemeral). |
+| `TURN_TIMEOUT_MS` | unset | Per-turn cap (ms) applied to hub turns, incl. compat `/v1`. |
+
+### Single-origin production run
+
+```bash
+npm run build:web    # builds the SPA to web/dist
+npm start            # serves web/dist + /api + /v1 + /ws from one origin (HOST:PORT)
+```
+
+In dev (`npm run dev`) Vite proxies `/api`, `/v1`, and `/ws` to `127.0.0.1:8787` instead.
+
+### Using the compat API from a harness
+
+All `/v1/*` calls require the token (Tasks above). Point a harness at this origin:
+
+- **OpenAI-compatible** (open-webui, etc.): base URL `http://<host>:<port>/v1`, API key = the token.
+- **Anthropic-compatible** (claude-cli / Claude Code):
+  ```bash
+  export ANTHROPIC_BASE_URL=http://<host>:<port>
+  export ANTHROPIC_API_KEY=<token>     # sent as x-api-key; the server checks it
+  # Claude Code / claude-cli will route POST /v1/messages through this server.
+  ```
+
+> **WARNING — `-auto` model ids run and write on the host.** A model id like `local-auto/<model>`
+> runs the local-agent with **no permission prompts** — it may read, write, and execute commands on
+> the machine hosting this server without confirmation. Use `-auto` ids only on trusted networks and
+> with harnesses you trust. Prefer the plain `<conn>/<model>` (read-only) id otherwise.
+
+### Remote access over a tunnel
+
+To reach the server from outside your LAN, front it with a tunnel instead of port-forwarding:
+
+```bash
+cloudflared tunnel --url http://localhost:8787   # or: ngrok http 8787
+```
+
+The tunnel gives you an `https://…` URL; the web client detects `https:` and connects the
+WebSocket over `wss://` automatically. The bearer token still gates every request.
+
 ## Prerequisites
 
 - Node 20+
@@ -74,22 +139,22 @@ same chat (live-sync).
   `auto` (all tools allowed). Applies to local-agent connections; chat-only providers ignore it.
 - SSE events: `delta` `{text}`, `tool_call` `{id,name,input}`, `tool_result` `{id,result}`,
   `done` `{usage}`, `error` `{message}` (and a leading `chat` `{chatId}` for `/api/query`).
-- **Auth:** M4 binds localhost only and does NOT enforce a bearer token yet. LAN bind
-  (`0.0.0.0`) + `Authorization: Bearer <token>` arrive in M6 — do not expose this port to an
-  untrusted network until then.
+- **Auth:** every `/api/*` route (except `GET /api/health`) requires the bearer token —
+  `Authorization: Bearer <token>` or `x-api-key: <token>` (see "Security / Run" above).
 
-Example:
+Example (every `/api/*` call carries the bearer token):
 ```bash
-curl -s localhost:8787/api/connections
-CHAT=$(curl -s -XPOST localhost:8787/api/chats -H 'content-type: application/json' -d '{}' | jq -r .chatId)
-curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H 'content-type: application/json' -d '{"text":"hello"}'
+TOKEN=$(cat data/.token)
+curl -s localhost:8787/api/connections -H "Authorization: Bearer $TOKEN"
+CHAT=$(curl -s -XPOST localhost:8787/api/chats -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' | jq -r .chatId)
+curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"text":"hello"}'
 ```
 
 ## Compatibility API (`/v1`)
 
 The server also exposes a **stateless** LLM-gateway surface that external harnesses (open-webui,
-claude-cli, Claude Code, etc.) can point at. Base URL: `http://127.0.0.1:8787/v1`
-(M5 is localhost-only; LAN bind + bearer token arrive in M6).
+claude-cli, Claude Code, etc.) can point at. Base URL: `http://<host>:<port>/v1`
+(LAN-bound by default; every `/v1/*` call requires the bearer token — see "Security / Run").
 
 ### Model-id grammar
 
@@ -120,15 +185,15 @@ No DB persistence of compat turns, no live-sync to the WebSocket UI.
 
 1. Add a new **OpenAI-compatible** connection in open-webui.
 2. Set the **OpenAI API base URL** to `http://<host>:8787/v1`.
-3. Enter any string as the API key (M5 ignores it).
+3. Enter the bearer token (from `data/.token` / the startup banner) as the API key.
 4. Refresh the model list — you should see `local/sonnet`, `local-auto/sonnet`, and any other connections you have configured.
 5. Pick a `local-auto/...` model to let the agent write and run tools autonomously.
 
 ### claude-cli / Claude Code setup
 
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8787/v1
-export ANTHROPIC_API_KEY=anything       # M5 ignores the token
+export ANTHROPIC_BASE_URL=http://<host>:<port>
+export ANTHROPIC_API_KEY=<token>        # sent as x-api-key; the server checks it
 # Claude Code / claude-cli will route POST /v1/messages through this server.
 ```
 
@@ -136,7 +201,7 @@ export ANTHROPIC_API_KEY=anything       # M5 ignores the token
 
 `-auto` models run the local-agent with **no permission prompts** — the agent may read, write,
 and execute on your machine without confirmation. Only expose these model ids to trusted harnesses.
-The server binds `127.0.0.1` in M5; do not reverse-proxy it to a network until M6 auth is in place.
+All `/v1/*` calls require the bearer token; still, only enable `-auto` ids on trusted networks.
 
 ### Limitations & behavior notes (M5)
 
@@ -156,19 +221,19 @@ The server binds `127.0.0.1` in M5; do not reverse-proxy it to a network until M
   `-auto` suffix for the auto-permission policy, so a connection literally named `x-auto` is
   unreachable as `x-auto/<model>` (it parses as the auto variant of `x`).
 - No keep-alive ping yet — a long first-token gap on a slow local-agent turn could hit an intermediary
-  idle timeout (M6). No auth, no persistence, no live-sync (M5).
+  idle timeout (deferred). Compat turns have no persistence and no live-sync to the WebSocket UI.
 
 ## Status
 
-**M5 — Compatibility API (`/v1`).** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 adds the native HTTP REST + SSE surface (see "Native HTTP API" above). M5 adds the OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/v1/messages`) gateway endpoints (see "Compatibility API" above). See `docs/superpowers/specs/` for the full roadmap (M6: LAN bind + auth).
+**M6 — auth + mobile.** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 added the native HTTP REST + SSE surface (see "Native HTTP API" above). M5 added the OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/v1/messages`) gateway endpoints (see "Compatibility API" above). M6 adds LAN bind (`0.0.0.0`), bearer-token auth on all `/api/*` and `/v1/*` routes, a Login screen with QR auto-login, and a responsive mobile layout (see "Security / Run" above). See `docs/superpowers/specs/` for the full roadmap.
 
 ## Security
 
 **Provider API keys** are stored in `data/chats.db` (gitignored), server-side only. They are never included in `connection_list` broadcasts, never sent to the browser after being saved, and never logged. This is enforced at the store layer — `listConnections` / `getConnection` return `ConnectionMeta` which omits `apiKey`; only `getConnectionWithSecret` (used internally by the hub to instantiate a provider) returns the key.
 
-**`list_dirs` exposes the server's directory tree (names only).** This is acceptable because the server binds `127.0.0.1` (localhost only). Before any non-localhost bind — LAN access, reverse proxy, or public exposure — `list_dirs` MUST be bounded to an allowed set of roots and/or require authentication. (Tracked for M6.)
+**`list_dirs` exposes the server's directory tree (names only).** The server LAN-binds (`0.0.0.0`) by default, but `list_dirs` runs over the WebSocket, which now requires the bearer token (subprotocol `['bearer', <token>]`) — so an unauthenticated LAN peer cannot reach it. It is still names-only and not scoped to a root set; treat exposure beyond a trusted network (e.g. a public tunnel) as sensitive.
 
-**LAN access and authentication** are out of scope until M6. Do not expose this server to a network without auth in place.
+**LAN access and authentication** ship in M6: the server binds `0.0.0.0` and every `/api/*` (except `GET /api/health`), `/v1/*`, and WebSocket connection is gated by the bearer token in `data/.token`. Do not expose the server publicly without the token in place (the QR / `#token=` flow is the supported way to share it). For remote access, prefer a tunnel (cloudflared / ngrok) over raw port-forwarding.
 
 ## Persistence
 

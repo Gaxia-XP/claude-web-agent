@@ -3,4 +3,14 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; margin: 0; }
-body { font-family: ui-sans-serif, system-ui, sans-serif; }
+body {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Use the dynamic viewport height on mobile so the chat input is not hidden
+   behind the browser chrome / on-screen keyboard. */
+@supports (height: 100dvh) {
+  html, body, #root { height: 100dvh; }
+}

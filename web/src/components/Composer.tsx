@@ -9,9 +9,9 @@ export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSe
     setText('')
   }
   return (
-    <div className="flex items-end gap-2 border-t bg-white p-3">
+    <div className="flex items-end gap-2 border-t bg-white p-3 sm:p-4">
       <textarea
-        className="flex-1 resize-none rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400"
+        className="flex-1 resize-none rounded-lg border px-3 py-2 text-base outline-none focus:ring-2 focus:ring-blue-400"
         rows={2}
         placeholder="พิมพ์ข้อความ… (Enter ส่ง, Shift+Enter ขึ้นบรรทัด)"
         value={text}
@@ -24,11 +24,17 @@ export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSe
         }}
       />
       {disabled ? (
-        <button className="rounded-lg bg-red-500 px-4 py-2 text-white" onClick={onStop}>
+        <button
+          className="min-h-[44px] shrink-0 rounded-lg bg-red-500 px-4 py-2 text-white"
+          onClick={onStop}
+        >
           Stop
         </button>
       ) : (
-        <button className="rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={submit}>
+        <button
+          className="min-h-[44px] shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-white"
+          onClick={submit}
+        >
           ส่ง
         </button>
       )}

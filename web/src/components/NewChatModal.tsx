@@ -29,8 +29,8 @@ export function NewChatModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="flex w-[90%] max-w-md flex-col gap-3 rounded-xl bg-white p-5 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4">
+      <div className="flex w-full max-w-md flex-col gap-3 rounded-xl bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">แชทใหม่</h2>
           <button className="text-gray-400 hover:text-gray-700" title="ปิด" onClick={onClose}>
@@ -67,11 +67,11 @@ export function NewChatModal({
         )}
 
         <div className="mt-2 flex justify-end gap-2">
-          <button className="rounded-lg border px-4 py-2 text-sm" onClick={onClose}>
+          <button className="min-h-[44px] rounded-lg border px-4 py-2 text-sm" onClick={onClose}>
             ยกเลิก
           </button>
           <button
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+            className="min-h-[44px] rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
             disabled={!draft.connectionId || !draft.model.trim()}
             onClick={onSubmit}
           >

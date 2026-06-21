@@ -23,12 +23,19 @@ import { WebSocket } from 'ws'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { rmSync } from 'node:fs'
+import { writeFileSync, rmSync } from 'node:fs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dir, '..')
 const PORT = 8790 // dedicated port, distinct from dev (5173/8787)
 const DB_PATH = join(tmpdir(), 'cwa-e2e-' + process.pid + '.db')
+
+// M6 auth: pre-seed a known token so the spawned server adopts it (loadOrCreateToken is idempotent),
+// and so the WS subprotocol below can authenticate. Per-pid path avoids cross-run collisions.
+const TOKEN_PATH = join(tmpdir(), 'cwa-e2e-' + process.pid + '.token')
+const TOKEN = 'e2e-multichat-token'
+writeFileSync(TOKEN_PATH, TOKEN)
+
 const WS_URL = `ws://127.0.0.1:${PORT}/ws`
 const CODEWORD = 'KIWI88'
 
@@ -39,7 +46,7 @@ const server = spawn(
   ['tsx', 'server/index.ts'],
   {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), DB_PATH },
+    env: { ...process.env, PORT: String(PORT), DB_PATH, TOKEN_PATH },
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: true,
   }
@@ -49,7 +56,7 @@ let serverReady = false
 server.stdout.on('data', (d) => {
   const s = d.toString()
   process.stdout.write('[server] ' + s)
-  if (s.includes('WebSocket listening')) serverReady = true
+  if (s.includes('listening on')) serverReady = true
 })
 server.stderr.on('data', (d) => process.stderr.write('[server-err] ' + d.toString()))
 server.on('exit', (code) => console.log('[server] exited', code))
@@ -66,6 +73,7 @@ function removeTempDb() {
       rmSync(DB_PATH + suffix, { force: true })
     } catch {}
   }
+  try { rmSync(TOKEN_PATH, { force: true }) } catch {}
 }
 async function teardown() {
   console.log('\n[e2e] Killing server…')
@@ -98,7 +106,7 @@ console.log('[e2e] Server ready.')
 // ── WS helpers ───────────────────────────────────────────────────────────────
 function connect() {
   return new Promise((res, rej) => {
-    const ws = new WebSocket(WS_URL)
+    const ws = new WebSocket(WS_URL, ['bearer', TOKEN])
     ws.on('open', () => res(ws))
     ws.on('error', rej)
   })

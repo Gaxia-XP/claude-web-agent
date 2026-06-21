@@ -62,7 +62,7 @@ async function runApiTurn(
     // window before it flushes; an unhandled stream 'error' would crash the process. So canWrite()
     // guards the common case and THIS handler additionally absorbs that race — it is exactly what
     // fixed M4's dead-socket crash vector. The turn keeps running (persist + WS live-sync) — same
-    // as the WS surface, where a disconnect does not abort the turn. Per-turn cancellation is M6.
+    // as the WS surface, where a disconnect does not abort the turn. Per-turn cancellation is deferred.
     raw.on('error', () => {})
     const canWrite = (): boolean => !raw.writableEnded && !raw.destroyed
     raw.writeHead(200, {
@@ -96,7 +96,7 @@ async function runApiTurn(
     // Guarantee EVERY SSE stream terminates with a `done` frame (after any `error`), so clients
     // can rely on it as the end-of-turn signal regardless of build-failure / interrupt / cancel paths.
     // Backpressure note: a stalled-but-alive reader buffers this turn's frames in the Node
-    // stream (bounded per turn, localhost) — explicit flow control / drain handling is M6.
+    // stream (bounded per turn) — explicit flow control / drain handling is deferred / future work.
     if (!doneEmitted && canWrite()) raw.write(sseFrame('done', {}))
     if (canWrite()) raw.end()
     return reply
@@ -140,8 +140,8 @@ async function runApiTurn(
 
 // Native HTTP API (REST + SSE). Shares the ChatHub/ChatRuntime engine with the WS UI so
 // turns originated here broadcast to WS subscribers for free (live-sync).
-// TODO(M6): bearer-token auth + 0.0.0.0 bind. M4 stays on the localhost listener and does
-// NOT enforce a token (see README "Native HTTP API").
+// Auth: bearer-token enforcement for /api/* lives in the buildApp onRequest guard (server/app.ts),
+// not here — these routes assume the request already passed that hook.
 export function registerHttpApi(app: FastifyInstance, deps: HttpApiDeps): void {
   const { hub, db } = deps
 
