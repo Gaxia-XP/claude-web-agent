@@ -27,7 +27,7 @@ import { rmSync } from 'node:fs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dir, '..')
-const PORT = 8790 // dedicated port, distinct from dev (5173/8787) and e2e-ws (8788)
+const PORT = 8790 // dedicated port, distinct from dev (5173/8787)
 const DB_PATH = join(tmpdir(), 'cwa-e2e-' + process.pid + '.db')
 const WS_URL = `ws://127.0.0.1:${PORT}/ws`
 const CODEWORD = 'KIWI88'
