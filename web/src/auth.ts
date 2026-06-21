@@ -24,8 +24,9 @@ export function clearToken(): void {
 }
 
 // On load: if the URL carries '#token=...', persist it and strip the fragment
-// (so the token never lingers in the address bar / history), then return the
-// effective stored token.
+// (so the token is kept out of server logs and the visible address bar; note it
+// may already have been recorded in the browser's local/synced history before
+// this strip runs), then return the effective stored token.
 export function bootstrapToken(): string | null {
   const fromHash = parseTokenFromHash(location.hash)
   if (fromHash) {

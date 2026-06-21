@@ -83,6 +83,10 @@ npm run dev
 
 Open http://localhost:5173
 
+> Dev also requires the bearer token (M6). Grab it from the `dev:server` startup banner
+> or `data/.token`, then either paste it into the Login screen or open
+> `http://localhost:5173/#token=$(cat data/.token)` to auto-login. See "Security / Run" above.
+
 ## Providers
 
 Three provider types are supported:
