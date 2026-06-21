@@ -142,11 +142,12 @@ same chat (live-sync).
 - **Auth:** every `/api/*` route (except `GET /api/health`) requires the bearer token —
   `Authorization: Bearer <token>` or `x-api-key: <token>` (see "Security / Run" above).
 
-Example:
+Example (every `/api/*` call carries the bearer token):
 ```bash
-curl -s localhost:8787/api/connections
-CHAT=$(curl -s -XPOST localhost:8787/api/chats -H 'content-type: application/json' -d '{}' | jq -r .chatId)
-curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H 'content-type: application/json' -d '{"text":"hello"}'
+TOKEN=$(cat data/.token)
+curl -s localhost:8787/api/connections -H "Authorization: Bearer $TOKEN"
+CHAT=$(curl -s -XPOST localhost:8787/api/chats -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' | jq -r .chatId)
+curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"text":"hello"}'
 ```
 
 ## Compatibility API (`/v1`)
