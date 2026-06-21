@@ -34,6 +34,20 @@ export function compatMessagesToTurnParams(messages: CompatMessage[], model: str
   return { userText: lastUser?.content ?? '', history, model }
 }
 
+// local-agent is stateless in the compat path (there is no SDK session to resume) AND
+// LocalAgentProvider ignores params.history — so a multi-turn '<conn>[-auto]/<model>' request would
+// otherwise see ONLY the last user message and lose all prior context. Fold the whole transcript into
+// one userText prompt so the agent has the conversation. A single-turn request renders to just that
+// message (no preamble), keeping the clean prompt; system messages are dropped (M5 limitation).
+export function renderLocalAgentPrompt(messages: CompatMessage[]): string {
+  const convo = messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+  if (convo.length <= 1) return convo[0]?.content ?? ''
+  const transcript = convo
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n\n')
+  return `You are continuing an ongoing conversation. The full transcript so far:\n\n${transcript}\n\nContinue the conversation by responding to the most recent User message.`
+}
+
 // Resolve provider + policy + model from a compat model id. Throws CompatError (404/400).
 export function resolveCompatTurn(
   deps: CompatDeps,
@@ -64,6 +78,11 @@ export async function executeCompatTurn(args: {
   onDelta?: (text: string) => void
 }): Promise<{ text: string; usage?: Usage; error?: string }> {
   const params = compatMessagesToTurnParams(args.messages, args.model)
+  if (args.provider.type === 'local-agent') {
+    // local-agent ignores params.history and has no session to resume here -> fold the transcript
+    // into userText so multi-turn context survives (single-turn is unchanged). See renderLocalAgentPrompt.
+    params.userText = renderLocalAgentPrompt(args.messages)
+  }
   const resolver = new PolicyPermissionResolver(args.policy)
   let error: string | undefined
   const send = (m: ServerMsg): void => {

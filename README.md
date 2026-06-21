@@ -138,14 +138,25 @@ export ANTHROPIC_API_KEY=anything       # M5 ignores the token
 and execute on your machine without confirmation. Only expose these model ids to trusted harnesses.
 The server binds `127.0.0.1` in M5; do not reverse-proxy it to a network until M6 auth is in place.
 
-### Limitations (M5)
+### Limitations & behavior notes (M5)
 
+- **Multi-turn:** the harness sends the full `messages[]` each call. For `anthropic-api` /
+  `openai-compatible` connections the transcript replays natively. For `local-agent` (stateless here
+  — no SDK session to resume), the prior transcript is folded into a single prompt so context is
+  preserved; a single-turn request is sent unchanged.
 - `system` messages are dropped (local-agent uses the `claude_code` preset; provider-API providers
-  have no system channel). Revisit in a future milestone if a harness needs it.
-- Non-text content blocks are unsupported (text-only).
+  have no system channel). A body whose ONLY message is `system` is rejected with `400`.
+- Non-text content is unsupported (text-only; array `content` is flattened to its text blocks).
 - Intermediate `tool_use` / `tool_result` blocks are not surfaced on the wire — only the final
   assistant text is returned.
-- No auth, no persistence, no live-sync (M5).
+- **Streaming errors:** once the `200` headers are sent the status cannot change, so a provider error
+  is surfaced as a terminal OpenAI `{"error":{…}}` frame (then `[DONE]`) / Anthropic `event: error` —
+  distinct from a normal completion. Non-stream errors return HTTP `500`.
+- Connection **names must be unique** and should not end in `-auto`: the model-id grammar reserves the
+  `-auto` suffix for the auto-permission policy, so a connection literally named `x-auto` is
+  unreachable as `x-auto/<model>` (it parses as the auto variant of `x`).
+- No keep-alive ping yet — a long first-token gap on a slow local-agent turn could hit an intermediary
+  idle timeout (M6). No auth, no persistence, no live-sync (M5).
 
 ## Status
 

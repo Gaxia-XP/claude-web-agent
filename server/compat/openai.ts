@@ -1,23 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { listCompatModels } from './models'
-import { CompatError, resolveCompatTurn, executeCompatTurn, type CompatDeps, type CompatMessage } from './turn'
-
-type ChatBody = { model?: unknown; messages?: unknown; stream?: unknown }
-
-// Validate + normalize the request body into { model, messages, stream }. Returns null on bad input.
-function parseChatBody(body: ChatBody): { model: string; messages: CompatMessage[]; stream: boolean } | null {
-  if (typeof body.model !== 'string' || body.model === '') return null
-  if (!Array.isArray(body.messages) || body.messages.length === 0) return null
-  const messages: CompatMessage[] = []
-  for (const m of body.messages) {
-    const role = (m as { role?: unknown }).role
-    const content = (m as { content?: unknown }).content
-    if ((role === 'system' || role === 'user' || role === 'assistant') && typeof content === 'string') {
-      messages.push({ role, content })
-    } else return null
-  }
-  return { model: body.model, messages, stream: (body as { stream?: unknown }).stream === true }
-}
+import { CompatError, resolveCompatTurn, executeCompatTurn, type CompatDeps } from './turn'
+import { parseCompatBody, openSseStream } from './wire'
 
 function openaiError(reply: FastifyReply, status: number, message: string): { error: { message: string; type: string } } {
   reply.code(status)
@@ -31,8 +15,8 @@ export function registerOpenAiCompat(app: FastifyInstance, deps: CompatDeps): vo
   }))
 
   app.post('/v1/chat/completions', async (req, reply) => {
-    const parsed = parseChatBody((req.body ?? {}) as ChatBody)
-    if (!parsed) return openaiError(reply, 400, 'model and a non-empty messages[] are required')
+    const parsed = parseCompatBody(req.body)
+    if (!parsed) return openaiError(reply, 400, 'model and a non-empty messages[] (with a user or assistant turn) are required')
 
     let resolved
     try {
@@ -42,32 +26,43 @@ export function registerOpenAiCompat(app: FastifyInstance, deps: CompatDeps): vo
       throw err
     }
 
-    const ac = new AbortController()
+    const chunk = (delta: Record<string, unknown>, finish: string | null): unknown => ({
+      id: 'chatcmpl-compat', object: 'chat.completion.chunk', created: 0, model: parsed.model,
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    })
 
     if (parsed.stream) {
-      reply.hijack()
-      const raw = reply.raw
-      raw.on('error', () => {}) // load-bearing crash-guard (M4): absorbs post-canWrite EPIPE races
-      raw.on('close', () => ac.abort())
-      const canWrite = (): boolean => !raw.writableEnded && !raw.destroyed
-      raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
-      const write = (obj: unknown): void => { if (canWrite()) raw.write(`data: ${JSON.stringify(obj)}\n\n`) }
-      const chunk = (delta: Record<string, unknown>, finish: string | null): unknown => ({
-        id: 'chatcmpl-compat', object: 'chat.completion.chunk', created: 0, model: parsed.model,
-        choices: [{ index: 0, delta, finish_reason: finish }],
-      })
-      write(chunk({ role: 'assistant' }, null)) // OpenAI's first chunk announces the role
-      const out = await executeCompatTurn({
-        ...resolved, messages: parsed.messages, signal: ac.signal, onDelta: (t) => write(chunk({ content: t }, null)),
-      })
-      if (out.error && canWrite()) write(chunk({ content: `\n[error] ${out.error}` }, null))
-      write(chunk({}, 'stop'))
-      if (canWrite()) raw.write('data: [DONE]\n\n')
-      if (canWrite()) raw.end()
+      const sse = openSseStream(reply)
+      try {
+        sse.write(`data: ${JSON.stringify(chunk({ role: 'assistant' }, null))}\n\n`) // first chunk announces the role
+        const out = await executeCompatTurn({
+          ...resolved, messages: parsed.messages, signal: sse.signal,
+          onDelta: (t) => sse.write(`data: ${JSON.stringify(chunk({ content: t }, null))}\n\n`),
+        })
+        if (out.error) {
+          // A provider error after the 200 headers is surfaced as a terminal OpenAI error frame
+          // (NOT a finish_reason:'stop' chunk) so a streaming client can tell it apart from a normal
+          // completion. The stream still ends with [DONE].
+          sse.write(`data: ${JSON.stringify({ error: { message: out.error, type: 'api_error' } })}\n\n`)
+        } else {
+          sse.write(`data: ${JSON.stringify(chunk({}, 'stop'))}\n\n`)
+        }
+        sse.write('data: [DONE]\n\n')
+      } finally {
+        sse.end()   // always terminate the stream
+        sse.abort() // tear down a timed-out/lingering provider run on every exit path
+      }
       return reply
     }
 
-    const out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal })
+    const ac = new AbortController()
+    req.raw.on('close', () => ac.abort()) // client disconnect -> abort the provider run
+    let out
+    try {
+      out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal })
+    } finally {
+      ac.abort() // abort on return (timeout/normal/error) so no detached provider run lingers
+    }
     if (out.error !== undefined) return openaiError(reply, 500, out.error)
     const inT = out.usage?.inputTokens ?? 0
     const outT = out.usage?.outputTokens ?? 0
