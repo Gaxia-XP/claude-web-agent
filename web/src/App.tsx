@@ -46,6 +46,8 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
   const [status, setStatus] = useState<WsStatus>('connecting')
   const [page, setPage] = useState<'chat' | 'settings'>('chat')
   const [newChat, setNewChat] = useState<NewChatDraft | null>(null)
+  // Mobile nav drawer (static rail at md+, slide-in below md).
+  const [navOpen, setNavOpen] = useState(false)
   const clientRef = useRef<ReturnType<typeof createWsClient> | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -80,6 +82,7 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
   const selectChat = (id: string) => {
     dispatch({ kind: 'setActive', chatId: id })
     clientRef.current?.send({ type: 'subscribe', chatId: id })
+    setNavOpen(false)
   }
 
   const defaultDraft = (): NewChatDraft => {
@@ -163,17 +166,41 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
 
   return (
     <div className="flex h-full">
-      <Sidebar
-        chats={state.chats}
-        activeChatId={activeId}
-        onSelect={selectChat}
-        onNew={openNewChat}
-        onRename={renameChat}
-        onDelete={deleteChat}
-      />
+      {/* Backdrop: only below md, only while the drawer is open. Tap to close. */}
+      {navOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          aria-hidden
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+      <div
+        className={
+          'fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 md:static md:z-auto md:translate-x-0 ' +
+          (navOpen ? 'translate-x-0' : '-translate-x-full')
+        }
+      >
+        <Sidebar
+          chats={state.chats}
+          activeChatId={activeId}
+          onSelect={selectChat}
+          onNew={openNewChat}
+          onRename={renameChat}
+          onDelete={deleteChat}
+        />
+      </div>
       <div className="flex h-full flex-1 flex-col">
         <header className="flex items-center justify-between border-b bg-white px-4 py-3">
-          <span className="text-lg font-semibold">Claude Web Agent</span>
+          <div className="flex items-center gap-2">
+            <button
+              className="-ml-1 flex h-9 w-9 items-center justify-center rounded-lg border text-lg md:hidden"
+              aria-label="เปิดเมนู"
+              onClick={() => setNavOpen(true)}
+            >
+              ☰
+            </button>
+            <span className="text-lg font-semibold">Claude Web Agent</span>
+          </div>
           <div className="flex items-center gap-2">
             {status === 'closed' && (
               <span className="rounded bg-yellow-100 px-2 py-1 text-xs text-yellow-800">
