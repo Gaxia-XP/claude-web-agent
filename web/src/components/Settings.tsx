@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import QRCode from 'qrcode'
 import type { ConnectionMeta, ChatMeta } from '@shared/protocol'
 import { ModelPicker } from './ModelPicker'
+import { apiFetch } from '../api'
 
 export type ConnectionFormPayload = {
   name: string
@@ -24,6 +26,8 @@ export function Settings({
   onUpdate,
   onDelete,
   onClose,
+  token,
+  onLogout,
 }: {
   connections: ConnectionMeta[]
   chats: ChatMeta[]
@@ -32,10 +36,62 @@ export function Settings({
   onUpdate: (id: string, patch: { name?: string; baseUrl?: string; apiKey?: string; defaultModel?: string }) => void
   onDelete: (id: string) => void
   onClose: () => void
+  token: string
+  onLogout: () => void
 }) {
   // editId: undefined = not editing; '' = creating new; otherwise editing that id
   const [editId, setEditId] = useState<string | undefined>(undefined)
   const [form, setForm] = useState<ConnectionFormPayload>(emptyForm())
+
+  // Harness panel state.
+  const origin = location.origin
+  const [revealToken, setRevealToken] = useState(false)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [qrSrc, setQrSrc] = useState<string | null>(null)
+  const [modelIds, setModelIds] = useState<string[] | null>(null)
+  const [modelError, setModelError] = useState<string | null>(null)
+
+  // qrcode.toDataURL returns a Promise -> resolve into state, then <img src>.
+  useEffect(() => {
+    let alive = true
+    QRCode.toDataURL(`${origin}/#token=${token}`)
+      .then((src) => {
+        if (alive) setQrSrc(src)
+      })
+      .catch(() => {
+        if (alive) setQrSrc(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [origin, token])
+
+  // Pull the compat model-id list (proves token works + shows what to paste).
+  useEffect(() => {
+    let alive = true
+    apiFetch('/v1/models', token)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('http ' + res.status))))
+      .then((body: { data?: Array<{ id?: string }> }) => {
+        if (!alive) return
+        const ids = (body.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === 'string')
+        setModelIds(ids)
+        setModelError(null)
+      })
+      .catch(() => {
+        if (!alive) return
+        setModelIds(null)
+        setModelError('โหลดรายการ model ไม่ได้')
+      })
+    return () => {
+      alive = false
+    }
+  }, [token])
+
+  const copy = (label: string, text: string) => {
+    void navigator.clipboard?.writeText(text)
+    setCopied(label)
+    setTimeout(() => setCopied((c) => (c === label ? null : c)), 1500)
+  }
 
   const startCreate = () => {
     setEditId('')
@@ -197,6 +253,109 @@ export function Settings({
             </div>
           </div>
         )}
+
+        <section className="mt-6 flex flex-col gap-3 rounded-xl border bg-white p-4">
+          <h3 className="text-base font-semibold">เชื่อมต่อจากที่อื่น / Harness</h3>
+          <p className="text-sm text-gray-500">
+            ใช้ base URL + token ด้านล่างเสียบ harness ภายนอกหรือโปรเจกต์อื่นได้เลย
+          </p>
+
+          <div className="grid gap-2 text-sm">
+            <div className="flex items-center justify-between gap-2 rounded-lg border bg-gray-50 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs text-gray-500">Base URL (UI / native /api)</div>
+                <div className="truncate font-mono">{origin}</div>
+              </div>
+              <button
+                className="shrink-0 rounded-lg border px-3 py-2 text-xs"
+                onClick={() => copy('origin', origin)}
+              >
+                {copied === 'origin' ? 'คัดลอกแล้ว' : 'คัดลอก'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 rounded-lg border bg-gray-50 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs text-gray-500">Base URL (compat /v1)</div>
+                <div className="truncate font-mono">{origin}/v1</div>
+              </div>
+              <button
+                className="shrink-0 rounded-lg border px-3 py-2 text-xs"
+                onClick={() => copy('v1', `${origin}/v1`)}
+              >
+                {copied === 'v1' ? 'คัดลอกแล้ว' : 'คัดลอก'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 rounded-lg border bg-gray-50 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs text-gray-500">Token (= API key)</div>
+                <div className="truncate font-mono">{revealToken ? token : '••••••••••••••••'}</div>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <button
+                  className="rounded-lg border px-3 py-2 text-xs"
+                  onClick={() => setRevealToken((r) => !r)}
+                >
+                  {revealToken ? 'ซ่อน' : 'แสดง'}
+                </button>
+                <button className="rounded-lg border px-3 py-2 text-xs" onClick={() => copy('token', token)}>
+                  {copied === 'token' ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-center gap-2 rounded-lg border bg-gray-50 p-3">
+            <div className="text-xs text-gray-500">สแกนเพื่อเข้าจากมือถือ (auto-login)</div>
+            {qrSrc ? (
+              <img src={qrSrc} alt="QR สำหรับ auto-login" className="h-44 w-44" />
+            ) : (
+              <div className="flex h-44 w-44 items-center justify-center text-xs text-gray-400">
+                กำลังสร้าง QR…
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <div className="text-xs font-medium text-gray-500">Model ids (compat)</div>
+            {modelError ? (
+              <p className="text-xs text-red-500">{modelError}</p>
+            ) : modelIds === null ? (
+              <p className="text-xs text-gray-400">กำลังโหลด…</p>
+            ) : modelIds.length === 0 ? (
+              <p className="text-xs text-gray-400">ยังไม่มี model</p>
+            ) : (
+              <ul className="max-h-40 overflow-y-auto rounded-lg border bg-gray-50 p-2 font-mono text-xs">
+                {modelIds.map((id) => (
+                  <li key={id} className="truncate py-0.5">
+                    {id}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 text-xs text-gray-600">
+            <div className="rounded-lg border bg-gray-50 p-3">
+              <div className="mb-1 font-medium text-gray-700">OpenAI-compatible</div>
+              <div className="font-mono">base_url = {origin}/v1</div>
+              <div className="font-mono">api_key = &lt;token&gt;</div>
+            </div>
+            <div className="rounded-lg border bg-gray-50 p-3">
+              <div className="mb-1 font-medium text-gray-700">Anthropic</div>
+              <div className="font-mono">ANTHROPIC_BASE_URL = {origin}</div>
+              <div className="font-mono">x-api-key = &lt;token&gt;</div>
+            </div>
+          </div>
+
+          <button
+            className="mt-1 min-h-[44px] rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+            onClick={onLogout}
+          >
+            ออกจากระบบ / Logout
+          </button>
+        </section>
       </div>
     </div>
   )

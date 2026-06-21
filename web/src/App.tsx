@@ -159,6 +159,8 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
           onUpdate={updateConnection}
           onDelete={deleteConnection}
           onClose={() => setPage('chat')}
+          token={token}
+          onLogout={onLogout}
         />
       </div>
     )
