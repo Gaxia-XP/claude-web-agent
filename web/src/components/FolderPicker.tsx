@@ -21,8 +21,8 @@ export function FolderPicker({
   if (!state.open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="flex max-h-[80vh] w-[90%] max-w-lg flex-col rounded-xl bg-white shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b p-4">
           <h2 className="text-lg font-semibold">เลือกโฟลเดอร์</h2>
           <button className="text-gray-400 hover:text-gray-700" title="ปิด" onClick={onClose}>
@@ -80,11 +80,11 @@ export function FolderPicker({
         </div>
 
         <div className="flex justify-end gap-2 border-t p-4">
-          <button className="rounded-lg border px-4 py-2 text-sm" onClick={onClose}>
+          <button className="min-h-[44px] rounded-lg border px-4 py-2 text-sm" onClick={onClose}>
             ยกเลิก
           </button>
           <button
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+            className="min-h-[44px] rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
             onClick={() => onChoose(state.path)}
           >
             เลือกโฟลเดอร์นี้

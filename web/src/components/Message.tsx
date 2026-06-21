@@ -14,9 +14,9 @@ export function Message({ msg }: { msg: UiMessage }) {
   }
   const isUser = msg.role === 'user'
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} px-3 py-2`}>
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} px-3 py-2 sm:px-4`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+        className={`max-w-[88%] rounded-2xl px-4 py-2 sm:max-w-[80%] ${
           isUser ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
         }`}
       >

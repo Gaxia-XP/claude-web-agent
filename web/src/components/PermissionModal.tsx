@@ -8,8 +8,8 @@ export function PermissionModal({
   onDecide: (decision: 'allow' | 'deny') => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-[90%] max-w-md rounded-xl bg-white p-5 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
         <h2 className="text-lg font-semibold">ขออนุญาตใช้เครื่องมือ</h2>
         <p className="mt-1 text-sm text-gray-600">
           Claude ต้องการใช้ <span className="font-mono font-semibold">{prompt.name}</span>
@@ -18,10 +18,16 @@ export function PermissionModal({
           {JSON.stringify(prompt.input, null, 2)}
         </pre>
         <div className="mt-4 flex justify-end gap-2">
-          <button className="rounded-lg border px-4 py-2" onClick={() => onDecide('deny')}>
+          <button
+            className="min-h-[44px] rounded-lg border px-4 py-2"
+            onClick={() => onDecide('deny')}
+          >
             ปฏิเสธ
           </button>
-          <button className="rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={() => onDecide('allow')}>
+          <button
+            className="min-h-[44px] rounded-lg bg-blue-600 px-4 py-2 text-white"
+            onClick={() => onDecide('allow')}
+          >
             อนุญาต
           </button>
         </div>
