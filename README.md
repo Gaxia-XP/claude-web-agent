@@ -85,9 +85,71 @@ CHAT=$(curl -s -XPOST localhost:8787/api/chats -H 'content-type: application/jso
 curl -s -XPOST localhost:8787/api/chats/$CHAT/messages -H 'content-type: application/json' -d '{"text":"hello"}'
 ```
 
+## Compatibility API (`/v1`)
+
+The server also exposes a **stateless** LLM-gateway surface that external harnesses (open-webui,
+claude-cli, Claude Code, etc.) can point at. Base URL: `http://127.0.0.1:8787/v1`
+(M5 is localhost-only; LAN bind + bearer token arrive in M6).
+
+### Model-id grammar
+
+Compat model ids encode both the connection and the permission policy:
+
+| Model id | Connection | Policy |
+| --- | --- | --- |
+| `<connName>/<model>` | connection named `<connName>` | `readonly` — read-only tools auto-allowed, writes/commands denied |
+| `<connName>-auto/<model>` | connection named `<connName>` | `auto` — all tools allowed (local-agent only; provider-API connections ignore it) |
+
+The `<model>` segment after the first `/` is passed through to the provider unchanged, so it may
+itself contain slashes (e.g. `openrouter/anthropic/claude-3.5-sonnet`).
+
+`GET /v1/models` lists one id per connection (plus a `-auto` variant for `local-agent` connections).
+
+### Endpoints
+
+| Method | Path | Wire format | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/v1/models` | OpenAI list | `{ object:'list', data:[{ id, object:'model', ... }] }` |
+| `POST` | `/v1/chat/completions` | OpenAI chat | `{ model, messages, stream? }` → JSON or SSE + `[DONE]` |
+| `POST` | `/v1/messages` | Anthropic messages | `{ model, messages, max_tokens?, stream? }` → JSON or SSE event sequence |
+
+All three endpoints are **stateless** — the harness sends the full `messages[]` every call.
+No DB persistence of compat turns, no live-sync to the WebSocket UI.
+
+### open-webui setup
+
+1. Add a new **OpenAI-compatible** connection in open-webui.
+2. Set the **OpenAI API base URL** to `http://<host>:8787/v1`.
+3. Enter any string as the API key (M5 ignores it).
+4. Refresh the model list — you should see `local/sonnet`, `local-auto/sonnet`, and any other connections you have configured.
+5. Pick a `local-auto/...` model to let the agent write and run tools autonomously.
+
+### claude-cli / Claude Code setup
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787/v1
+export ANTHROPIC_API_KEY=anything       # M5 ignores the token
+# Claude Code / claude-cli will route POST /v1/messages through this server.
+```
+
+### Security warning
+
+`-auto` models run the local-agent with **no permission prompts** — the agent may read, write,
+and execute on your machine without confirmation. Only expose these model ids to trusted harnesses.
+The server binds `127.0.0.1` in M5; do not reverse-proxy it to a network until M6 auth is in place.
+
+### Limitations (M5)
+
+- `system` messages are dropped (local-agent uses the `claude_code` preset; provider-API providers
+  have no system channel). Revisit in a future milestone if a harness needs it.
+- Non-text content blocks are unsupported (text-only).
+- Intermediate `tool_use` / `tool_result` blocks are not surfaced on the wire — only the final
+  assistant text is returned.
+- No auth, no persistence, no live-sync (M5).
+
 ## Status
 
-**M4 — native HTTP API (REST + SSE).** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 adds the native HTTP REST + SSE surface (see "Native HTTP API" above). See `docs/superpowers/specs/` for the full roadmap (M5–M6: compat API, LAN/auth).
+**M5 — Compatibility API (`/v1`).** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 adds the native HTTP REST + SSE surface (see "Native HTTP API" above). M5 adds the OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/v1/messages`) gateway endpoints (see "Compatibility API" above). See `docs/superpowers/specs/` for the full roadmap (M6: LAN bind + auth).
 
 ## Security
 
@@ -114,6 +176,7 @@ npm test                           # unit suite (Vitest, environment node)
 npm run build:web                  # production build of the web app
 npx tsx scripts/e2e-openai.mjs    # openai-compatible e2e — no credentials required
 npx tsx scripts/e2e-rest.mjs      # native HTTP API (REST + SSE + live-sync) e2e — no credentials required
+npx tsx scripts/e2e-compat.mjs    # compat API (/v1/models + /v1/chat/completions + /v1/messages) e2e — no credentials required
 npx tsx scripts/e2e-multichat.mjs # local-agent multi-chat + persistence + resume e2e (requires Claude login)
 ```
 
