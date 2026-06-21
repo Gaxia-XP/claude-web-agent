@@ -25,12 +25,13 @@ export interface BuildAppDeps {
 
 // §4: a request is allowlisted (token NOT required) when it is GET /api/health, or any path that
 // is neither an /api/* call nor a /v1/* call (i.e. static SPA assets / index.html). Everything else
-// is guarded.
+// is guarded. Bare /api and /v1 (no trailing slash) are also guarded so a future bare-path route
+// cannot silently bypass the auth boundary.
 function isAllowlisted(req: FastifyRequest): boolean {
   const path = req.url.split('?')[0]
   if (req.method === 'GET' && path === '/api/health') return true
-  if (path.startsWith('/api/')) return false
-  if (path.startsWith('/v1/')) return false
+  if (path === '/api' || path.startsWith('/api/')) return false
+  if (path === '/v1' || path.startsWith('/v1/')) return false
   return true
 }
 
@@ -77,7 +78,7 @@ export function buildApp(deps: BuildAppDeps): { app: FastifyInstance; wss: WebSo
     // SPA fallback: any GET that isn't an API/WS path serves index.html so client-side routing works.
     app.setNotFoundHandler((req, reply) => {
       const path = req.url.split('?')[0]
-      const isApi = path.startsWith('/api/') || path.startsWith('/v1/') || path === '/ws'
+      const isApi = path === '/api' || path.startsWith('/api/') || path === '/v1' || path.startsWith('/v1/') || path === '/ws'
       if (req.method === 'GET' && !isApi && existsSync(indexHtml)) {
         return reply.type('text/html').sendFile('index.html')
       }

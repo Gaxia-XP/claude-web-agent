@@ -100,4 +100,18 @@ describe('buildApp auth hook (§4)', () => {
     // No webDist registered in tests -> default Fastify 404, but crucially NOT a 401 from the guard.
     expect(res.statusCode).toBe(404)
   })
+
+  it('bare /api (no trailing slash) without a token -> 401, not 404 (latent-hole guard)', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/api' })
+    expect(res.statusCode).toBe(401)
+    expect(res.headers['www-authenticate']).toBe('Bearer')
+  })
+
+  it('bare /v1 (no trailing slash) without a token -> 401, not 404 (latent-hole guard)', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/v1' })
+    expect(res.statusCode).toBe(401)
+    expect(res.headers['www-authenticate']).toBe('Bearer')
+  })
 })
