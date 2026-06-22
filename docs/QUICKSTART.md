@@ -17,7 +17,7 @@ automatically every time you log in.
 ## 2. First-time setup
 
 ```powershell
-git clone <your-repo-url> claude-web-agent
+git clone https://github.com/Gaxia-XP/claude-web-agent.git
 cd claude-web-agent
 npm install
 npm run build:web      # builds the SPA into web/dist (served by the server)
