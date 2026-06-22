@@ -123,8 +123,8 @@ describe('LocalAgentProvider', () => {
     const provider = new LocalAgentProvider(apiErrorQuery as never)
     const p = provider.send({ userText: 'x' }, ctx)
     await expect(p).rejects.toThrow(/529/)
-    // and the error text must NOT have leaked through as a normal completion
-    await expect(p).rejects.not.toThrow(/^$/)
+    // and it must surface as our clean wrapper, NOT the raw SDK string leaked as a normal completion
+    await expect(p).rejects.toThrow(/local-agent turn failed:/)
   })
 
   it('proactively calls query.interrupt() when the signal aborts mid-turn', async () => {
