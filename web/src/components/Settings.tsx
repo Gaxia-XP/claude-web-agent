@@ -3,6 +3,7 @@ import QRCode from 'qrcode'
 import type { ConnectionMeta, ChatMeta } from '@shared/protocol'
 import { ModelPicker } from './ModelPicker'
 import { apiFetch } from '../api'
+import { qrCandidates, defaultQrBase, qrTarget, hostIsLoopback } from '../qr'
 
 export type ConnectionFormPayload = {
   name: string
@@ -48,13 +49,37 @@ export function Settings({
   const [revealToken, setRevealToken] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [qrSrc, setQrSrc] = useState<string | null>(null)
+  const [lanUrls, setLanUrls] = useState<string[]>([])
+  const [qrBase, setQrBase] = useState<string>(() => defaultQrBase(origin, []))
   const [modelIds, setModelIds] = useState<string[] | null>(null)
   const [modelError, setModelError] = useState<string | null>(null)
 
-  // qrcode.toDataURL returns a Promise -> resolve into state, then <img src>.
+  // Pull the server's LAN urls so a QR opened on the server box (origin = localhost) can point at a
+  // LAN ip a phone can actually reach. Default the chosen base to the best reachable address; the
+  // user can still switch (one ip may be a VPN/virtual adapter). On failure keep the origin default.
   useEffect(() => {
     let alive = true
-    QRCode.toDataURL(`${origin}/#token=${token}`)
+    apiFetch('/api/lan-urls', token)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('http ' + res.status))))
+      .then((body: { urls?: string[] }) => {
+        if (!alive) return
+        const urls = (body.urls ?? []).filter((u): u is string => typeof u === 'string')
+        setLanUrls(urls)
+        setQrBase(defaultQrBase(origin, urls))
+      })
+      .catch(() => {
+        /* keep the origin-based default */
+      })
+    return () => {
+      alive = false
+    }
+  }, [origin, token])
+
+  // qrcode.toDataURL returns a Promise -> resolve into state, then <img src>. Re-runs when the
+  // chosen base changes (user picked a different ip).
+  useEffect(() => {
+    let alive = true
+    QRCode.toDataURL(qrTarget(qrBase, token))
       .then((src) => {
         if (alive) setQrSrc(src)
       })
@@ -64,7 +89,9 @@ export function Settings({
     return () => {
       alive = false
     }
-  }, [origin, token])
+  }, [qrBase, token])
+
+  const qrBases = qrCandidates(origin, lanUrls)
 
   // Pull the compat model-id list (proves token works + shows what to paste).
   useEffect(() => {
@@ -314,6 +341,33 @@ export function Settings({
               <div className="flex h-44 w-44 items-center justify-center text-xs text-gray-400">
                 กำลังสร้าง QR…
               </div>
+            )}
+            <div className="w-full truncate text-center font-mono text-[10px] text-gray-500">{qrBase}</div>
+            {qrBases.length > 1 && (
+              <div className="flex flex-wrap justify-center gap-1">
+                {qrBases.map((c) => {
+                  let host = c
+                  try {
+                    host = new URL(c).host
+                  } catch {
+                    /* keep the raw string */
+                  }
+                  return (
+                    <button
+                      key={c}
+                      className={`rounded-lg border px-2 py-1 text-[10px] ${c === qrBase ? 'bg-blue-600 text-white' : ''}`}
+                      onClick={() => setQrBase(c)}
+                    >
+                      {host}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {hostIsLoopback(qrBase) && (
+              <p className="text-center text-[10px] text-amber-600">
+                QR ชี้ไป localhost — มือถือจะเข้าไม่ได้ เปิดแดชบอร์ดผ่าน IP ของวง LAN หรือเลือกปุ่ม IP ด้านบน
+              </p>
             )}
           </div>
 

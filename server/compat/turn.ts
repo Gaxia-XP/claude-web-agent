@@ -4,7 +4,8 @@ import type { ProviderConfig } from '../providers/index'
 import type { DB } from '../store'
 import { PolicyPermissionResolver, type PermissionPolicy } from '../permission'
 import { runTurn } from '../agent'
-import { parseModelId, resolveConnectionByName, connectionToProviderConfig } from './models'
+import { parseModelId, resolveConnectionByName, connectionToProviderConfig, defaultLocalAgentConnection } from './models'
+import type { ConnectionWithSecret } from '../store'
 
 export type CompatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 // turnTimeoutMs (optional) flows into runTurn so a gateway can bound a synchronous request and, on
@@ -51,21 +52,35 @@ export function renderLocalAgentPrompt(messages: CompatMessage[]): string {
 }
 
 // Resolve provider + policy + model from a compat model id. Throws CompatError (404/400).
+// Two input shapes:
+//   '<conn>[-auto]/<model>'  -> the canonical, connection-prefixed form (what /v1/models advertises)
+//   '<model>' (no slash)     -> lenient bare name -> default local-agent connection, readonly policy
+// An id that DOES contain a '/' but fails to parse (e.g. 'local/', '/x') is malformed -> 404,
+// NOT treated as a bare name.
 export function resolveCompatTurn(
   deps: CompatDeps,
   modelId: string,
 ): { provider: Provider; policy: PermissionPolicy; model: string } {
-  const parsed = parseModelId(modelId)
-  if (!parsed) throw new CompatError(404, `model not found: ${modelId}`)
-  const conn = resolveConnectionByName(deps.db, parsed.connName)
-  if (!conn) throw new CompatError(404, `unknown connection: ${parsed.connName}`)
-  let provider: Provider
-  try {
-    provider = deps.makeProvider(connectionToProviderConfig(conn, parsed.model))
-  } catch (err) {
-    throw new CompatError(400, err instanceof Error ? err.message : String(err))
+  const buildProvider = (conn: ConnectionWithSecret, model: string): Provider => {
+    try {
+      return deps.makeProvider(connectionToProviderConfig(conn, model))
+    } catch (err) {
+      throw new CompatError(400, err instanceof Error ? err.message : String(err))
+    }
   }
-  return { provider, policy: parsed.policy, model: parsed.model }
+
+  const parsed = parseModelId(modelId)
+  if (parsed) {
+    const conn = resolveConnectionByName(deps.db, parsed.connName)
+    if (!conn) throw new CompatError(404, `unknown connection: ${parsed.connName}`)
+    return { provider: buildProvider(conn, parsed.model), policy: parsed.policy, model: parsed.model }
+  }
+
+  // Bare-name fallback (only when there is no slash at all).
+  if (modelId.includes('/')) throw new CompatError(404, `model not found: ${modelId}`)
+  const conn = defaultLocalAgentConnection(deps.db)
+  if (!conn) throw new CompatError(404, `model not found: ${modelId}`)
+  return { provider: buildProvider(conn, modelId), policy: 'readonly', model: modelId }
 }
 
 // Run one stateless turn through the shared runTurn. Streams assistant text via onDelta. Returns the

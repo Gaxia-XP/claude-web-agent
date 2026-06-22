@@ -15,10 +15,10 @@ const TOKEN = 'test-token-abc'
 // Build a real app via buildApp with an in-memory DB. makeProvider is replaced with a
 // FakeProvider factory so no real provider/network is touched (the hub never runs a turn
 // in these auth tests — we only exercise the onRequest guard + route registration).
-function makeApp(opts: { webDist?: string } = {}) {
+function makeApp(opts: { webDist?: string; lanUrls?: string[] } = {}) {
   const db = openDb(':memory:')
   const hub = new ChatHub({ db, makeProvider: () => new FakeProvider(), genId: randomUUID, now: Date.now })
-  const { app, wss } = buildApp({ db, hub, makeProvider, token: TOKEN, webDist: opts.webDist })
+  const { app, wss } = buildApp({ db, hub, makeProvider, token: TOKEN, webDist: opts.webDist, lanUrls: opts.lanUrls })
   return { app, wss, db }
 }
 
@@ -28,6 +28,26 @@ describe('buildApp auth hook (§4)', () => {
     const res = await app.inject({ method: 'GET', url: '/api/health' })
     expect(res.statusCode).toBe(200)
     expect((res.json() as { status: string }).status).toBeTruthy()
+  })
+
+  it('GET /api/lan-urls is token-guarded: no token -> 401', async () => {
+    const { app } = makeApp({ lanUrls: ['http://192.168.1.2:8787'] })
+    const res = await app.inject({ method: 'GET', url: '/api/lan-urls' })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('GET /api/lan-urls with token -> 200 { urls }', async () => {
+    const { app } = makeApp({ lanUrls: ['http://192.168.1.2:8787', 'http://10.0.0.5:8787'] })
+    const res = await app.inject({ method: 'GET', url: '/api/lan-urls', headers: { authorization: `Bearer ${TOKEN}` } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ urls: ['http://192.168.1.2:8787', 'http://10.0.0.5:8787'] })
+  })
+
+  it('GET /api/lan-urls with token but no LAN urls configured -> 200 { urls: [] }', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/api/lan-urls', headers: { authorization: `Bearer ${TOKEN}` } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ urls: [] })
   })
 
   it('GET /api/chats without a token -> 401 { error: "unauthorized" } + WWW-Authenticate', async () => {

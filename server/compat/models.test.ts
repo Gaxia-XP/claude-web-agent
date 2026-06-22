@@ -1,7 +1,7 @@
 // server/compat/models.test.ts
 import { describe, it, expect } from 'vitest'
-import { openDb, createConnection } from '../store'
-import { parseModelId, resolveConnectionByName, connectionToProviderConfig, listCompatModels } from './models'
+import { openDb, createConnection, deleteConnection } from '../store'
+import { parseModelId, resolveConnectionByName, connectionToProviderConfig, listCompatModels, defaultLocalAgentConnection } from './models'
 
 describe('compat/models parseModelId', () => {
   it('parses "<conn>/<model>" as readonly', () => {
@@ -35,6 +35,23 @@ describe('compat/models resolve + enumerate', () => {
   it('builds a ProviderConfig with the requested model + secret', () => {
     const conn = { id: 'c2', type: 'anthropic-api', name: 'claude', apiKey: 'sk-x', defaultModel: 'd', createdAt: 1, updatedAt: 1 }
     expect(connectionToProviderConfig(conn, 'claude-opus-4-8')).toEqual({ type: 'anthropic-api', defaultModel: 'claude-opus-4-8', apiKey: 'sk-x' })
+  })
+  it('defaultLocalAgentConnection prefers the seeded "local" connection over other local-agents', () => {
+    const db = openDb(':memory:') // seeds local-agent name="local"
+    createConnection(db, { id: 'c2', type: 'local-agent', name: 'other', defaultModel: 'opus', now: 1 })
+    expect(defaultLocalAgentConnection(db)?.id).toBe('local')
+  })
+  it('defaultLocalAgentConnection falls back to the first local-agent when "local" is gone', () => {
+    const db = openDb(':memory:')
+    deleteConnection(db, 'local')
+    createConnection(db, { id: 'c2', type: 'local-agent', name: 'other', defaultModel: 'opus', now: 1 })
+    expect(defaultLocalAgentConnection(db)?.id).toBe('c2')
+  })
+  it('defaultLocalAgentConnection returns undefined when no local-agent connection exists', () => {
+    const db = openDb(':memory:')
+    deleteConnection(db, 'local')
+    createConnection(db, { id: 'c2', type: 'anthropic-api', name: 'claude', apiKey: 'sk', defaultModel: 'd', now: 1 })
+    expect(defaultLocalAgentConnection(db)).toBeUndefined()
   })
   it('lists "<name>/<model>" for all, plus "-auto" only for local-agent', () => {
     const db = openDb(':memory:') // seeds the local-agent connection name="local" defaultModel="sonnet"

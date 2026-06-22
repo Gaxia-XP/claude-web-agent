@@ -93,13 +93,19 @@ export class LocalAgentProvider implements Provider {
             break
           }
           case 'result': {
-            if (msg.subtype === 'success') {
+            // The SDK marks API failures with is_error:true even though subtype stays 'success'
+            // (e.g. {subtype:'success', is_error:true, api_error_status:529, result:'API Error: 529 ...'}).
+            // Treat any non-success subtype OR an is_error result as a turn failure so the error text
+            // never masquerades as the assistant's answer. We throw our own clean error rather than
+            // relying on the SDK to throw on the next iteration (which it may stop doing).
+            if (msg.subtype === 'success' && !msg.is_error) {
               if (typeof msg.result === 'string') finalText = msg.result
               if (msg.usage) {
                 usage = { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
               }
             } else {
-              throw new Error(`local-agent turn failed: ${msg.subtype}`)
+              const detail = msg.is_error && typeof msg.result === 'string' ? msg.result : msg.subtype
+              throw new Error(`local-agent turn failed: ${detail}`)
             }
             break
           }

@@ -101,6 +101,32 @@ describe('LocalAgentProvider', () => {
     await expect(provider.send({ userText: 'x' }, ctx)).rejects.toThrow(/error_max_turns/)
   })
 
+  // The SDK reports API failures with is_error:true even though subtype stays 'success'
+  // (e.g. {subtype:'success', is_error:true, api_error_status:529, result:'API Error: 529 ...'}).
+  // Such a result must NOT be returned as the assistant's answer — it must throw so runTurn
+  // surfaces a real error instead of empty/garbage content.
+  it('throws on an is_error result even when subtype is "success" (API error)', async () => {
+    function apiErrorQuery(_opts: unknown) {
+      async function* gen() {
+        yield { type: 'system', subtype: 'init', session_id: 'sess-err' }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          api_error_status: 529,
+          result: 'API Error: 529 Overloaded. This is a server-side issue, usually temporary.',
+        }
+      }
+      return Object.assign(gen(), { interrupt: async () => {} })
+    }
+    const { ctx } = makeCtx()
+    const provider = new LocalAgentProvider(apiErrorQuery as never)
+    const p = provider.send({ userText: 'x' }, ctx)
+    await expect(p).rejects.toThrow(/529/)
+    // and the error text must NOT have leaked through as a normal completion
+    await expect(p).rejects.not.toThrow(/^$/)
+  })
+
   it('proactively calls query.interrupt() when the signal aborts mid-turn', async () => {
     const controller = new AbortController()
 

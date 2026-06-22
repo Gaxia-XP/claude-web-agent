@@ -1,6 +1,6 @@
 // server/compat/turn.test.ts
 import { describe, it, expect } from 'vitest'
-import { openDb, createConnection } from '../store'
+import { openDb, createConnection, deleteConnection } from '../store'
 import { FakeProvider } from '../providers/fake'
 import { makeProvider } from '../providers/index'
 import { compatMessagesToTurnParams, renderLocalAgentPrompt, resolveCompatTurn, executeCompatTurn, CompatError } from './turn'
@@ -22,9 +22,11 @@ describe('compat/turn compatMessagesToTurnParams', () => {
 
 describe('compat/turn resolveCompatTurn', () => {
   const deps = { db: openDb(':memory:'), makeProvider }
-  it('throws CompatError 404 for a malformed model id', () => {
-    expect(() => resolveCompatTurn(deps, 'nope')).toThrow(CompatError)
-    try { resolveCompatTurn(deps, 'nope') } catch (e) { expect((e as CompatError).status).toBe(404) }
+  it('throws CompatError 404 for a malformed model id (slash present but unparseable)', () => {
+    // NOTE: a bare 'nope' (no slash) is now a valid bare-name input -> default local-agent.
+    // A malformed id is one that DOES contain a slash yet fails to parse, e.g. '/sonnet'.
+    expect(() => resolveCompatTurn(deps, '/sonnet')).toThrow(CompatError)
+    try { resolveCompatTurn(deps, '/sonnet') } catch (e) { expect((e as CompatError).status).toBe(404) }
   })
   it('throws CompatError 404 for an unknown connection name', () => {
     expect.assertions(1) // fail loudly if resolveCompatTurn ever stops throwing
@@ -43,6 +45,32 @@ describe('compat/turn resolveCompatTurn', () => {
     expect(r.policy).toBe('auto')
     expect(r.model).toBe('sonnet')
     expect(r.provider.type).toBe('local-agent')
+  })
+
+  // Bare model ids (no '/') let third-party clients (LMSA, OpenAI SDK) that send just a model
+  // name like 'sonnet' work without knowing the '<conn>/<model>' convention. They route to the
+  // default local-agent connection with readonly policy; the bare string is the model.
+  it('resolves a BARE model id (no slash) to the default local-agent connection, readonly', () => {
+    const r = resolveCompatTurn(deps, 'sonnet')
+    expect(r.provider.type).toBe('local-agent')
+    expect(r.policy).toBe('readonly')
+    expect(r.model).toBe('sonnet')
+  })
+  it('passes an arbitrary bare model string through unchanged (e.g. claude-opus-4-7)', () => {
+    const r = resolveCompatTurn(deps, 'claude-opus-4-7')
+    expect(r.model).toBe('claude-opus-4-7')
+    expect(r.provider.type).toBe('local-agent')
+  })
+  it('still 404s a malformed id that DOES contain a slash (e.g. "local/")', () => {
+    expect.assertions(1)
+    try { resolveCompatTurn(deps, 'local/') } catch (e) { expect((e as CompatError).status).toBe(404) }
+  })
+  it('404s a bare name when no local-agent connection exists', () => {
+    expect.assertions(1)
+    const db = openDb(':memory:')
+    deleteConnection(db, 'local')
+    createConnection(db, { id: 'c2', type: 'anthropic-api', name: 'claude', apiKey: 'sk', defaultModel: 'd', now: 1 })
+    try { resolveCompatTurn({ db, makeProvider }, 'sonnet') } catch (e) { expect((e as CompatError).status).toBe(404) }
   })
 })
 
