@@ -2,7 +2,13 @@
   "name": "claude-web-agent",
   "private": true,
   "version": "0.1.0",
+  "description": "Local web app for chatting with Claude across multiple providers — full agent mode (local-agent), Anthropic API (stateless chat), or any OpenAI-compatible endpoint.",
   "license": "MIT",
+  "author": "Gaxia-XP",
+  "repository": { "type": "git", "url": "git+https://github.com/Gaxia-XP/claude-web-agent.git" },
+  "homepage": "https://github.com/Gaxia-XP/claude-web-agent#readme",
+  "bugs": { "url": "https://github.com/Gaxia-XP/claude-web-agent/issues" },
+  "keywords": ["claude", "anthropic", "agent", "llm", "chat", "openai-compatible", "fastify", "react", "self-hosted"],
   "type": "module",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
