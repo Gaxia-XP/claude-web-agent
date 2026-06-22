@@ -93,6 +93,10 @@ git pull
 npm install            # only if dependencies changed
 npm run build:web      # rebuild the SPA
 Stop-ScheduledTask  -TaskName ClaudeWebAgent
+# Stop-ScheduledTask kills the task's PowerShell host, but the tsx/node child can keep holding
+# port 8787 — free any lingering listener so the restart doesn't hit EADDRINUSE (use your PORT if custom):
+Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 Start-ScheduledTask -TaskName ClaudeWebAgent
 ```
 
