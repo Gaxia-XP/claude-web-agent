@@ -1,8 +1,10 @@
 # Claude Web Agent
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Local web app for chatting with Claude across multiple providers — full agent mode (local-agent), Anthropic API (stateless chat), or any OpenAI-compatible endpoint (OpenRouter, Ollama, etc.).
 
-> **New here / on Windows?** See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — install, run, reach it from your phone, and start the server automatically at logon.
+> **New here?** **Windows:** see **[docs/QUICKSTART.md](docs/QUICKSTART.md)** for a guided setup (install, run, phone access, and auto-start at logon). **Linux/macOS:** jump to [Prerequisites](#prerequisites) and [Run (dev)](#run-dev) below — `npm install && npm run build:web && npm start` is all you need.
 
 ## Security / Run (LAN + auth)
 
@@ -109,8 +111,8 @@ Sends SSE requests to any OpenAI-compatible endpoint (OpenRouter, Ollama, LM Stu
 
 Open the **Settings** page (gear icon in the top bar) to manage connections:
 
-- **Add a connection** — choose provider type, enter a name, base URL (if needed), API key (if needed), and default model.
-- **Edit a connection** — update any field, including rotating the API key.
+- **Add a connection** — choose provider type (`anthropic-api` or `openai-compatible`), enter a name, base URL (if needed), API key (if needed), and default model. The built-in `local` (local-agent) connection is created automatically on first run and cannot be added or duplicated from Settings — `local-agent` is not offered in the type chooser, so there is always exactly one local-agent connection.
+- **Edit a connection** — update the name, base URL, default model, or rotate the API key. The provider type is fixed once the connection is created.
 - **Delete a connection** — connections that have chats referencing them cannot be deleted. The built-in `local` connection cannot be deleted.
 - **API key** — stored server-side only (see Security). The key is never echoed back to the browser after being saved.
 
@@ -140,6 +142,8 @@ same chat (live-sync).
 | GET | `/api/chats/:id/messages` | — | `{ messages }` (404 if unknown) |
 | POST | `/api/chats/:id/messages` | `{ text, stream?, permission? }` | non-stream `{ text, toolCalls, usage }`; stream → SSE |
 | POST | `/api/query` | `{ text, connectionId?, model?, cwd?, stream?, permission? }` | one-off chat + turn |
+| GET | `/api/lan-urls` | — | `{ urls }` — LAN base URLs (`http://<ip>:<port>`) for the in-page Settings QR; token-guarded; `[]` when no LAN interface is found |
+| GET | `/api/health` | — | `{ status }` — liveness; the **only** `/api/*` route that does not require the token |
 
 - `permission`: `readonly` (default — read-only tools auto-allowed, writes/commands denied) or
   `auto` (all tools allowed). Applies to local-agent connections; chat-only providers ignore it.
@@ -170,9 +174,18 @@ Compat model ids encode both the connection and the permission policy:
 | --- | --- | --- |
 | `<connName>/<model>` | connection named `<connName>` | `readonly` — read-only tools auto-allowed, writes/commands denied |
 | `<connName>-auto/<model>` | connection named `<connName>` | `auto` — all tools allowed (local-agent only; provider-API connections ignore it) |
+| `<model>` (no `/`) | default `local-agent` connection (seeded `local`, else the first local-agent connection) | `readonly` |
 
 The `<model>` segment after the first `/` is passed through to the provider unchanged, so it may
 itself contain slashes (e.g. `openrouter/anthropic/claude-3.5-sonnet`).
+
+A **bare** model id with no `/` (e.g. `sonnet`, `claude-opus-4-7`) is also accepted, for lenient
+clients (LMSA, OpenAI SDKs) that send just a model name. It routes to the **default `local-agent`
+connection** — the seeded `local` connection if present, otherwise the first local-agent connection
+created — with the **`readonly`** policy, passing the bare string through as the model. It is not
+advertised by `GET /v1/models`. An id that *contains* a `/` but fails to parse (e.g. `/x`, `local/`)
+is malformed and returns `404` — it is **not** treated as a bare name; a bare id also returns `404`
+if no local-agent connection exists.
 
 `GET /v1/models` lists one id per connection (plus a `-auto` variant for `local-agent` connections).
 
@@ -233,6 +246,8 @@ All `/v1/*` calls require the bearer token; still, only enable `-auto` ids on tr
 
 **M6 — auth + mobile.** M1 established the baseline (local-agent streaming + tool use). M2 added multi-chat, SQLite persistence, resume, and FolderPicker. M3 added the full provider system: create / edit / delete connections from the Settings page, pick connection + model in the New Chat modal, and route each turn through the correct provider. M4 added the native HTTP REST + SSE surface (see "Native HTTP API" above). M5 added the OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/v1/messages`) gateway endpoints (see "Compatibility API" above). M6 adds LAN bind (`0.0.0.0`), bearer-token auth on all `/api/*` and `/v1/*` routes, a Login screen with QR auto-login, and a responsive mobile layout (see "Security / Run" above). See `docs/superpowers/specs/` for the full roadmap.
 
+**Post-M6 (public release).** The project is now public and **MIT-licensed** (see [LICENSE](LICENSE)). Added a Windows **auto-start** option (`scripts/install-autostart.ps1` / `uninstall-autostart.ps1` / `start-server.ps1`; see [docs/QUICKSTART.md](docs/QUICKSTART.md)) plus runtime hardening: compat non-streaming abort handling, a `local-agent` API-error guard, lenient **bare** compat model ids (a model id with no `/` routes to the default `local-agent` connection with the `readonly` policy), and a token-guarded `GET /api/lan-urls` endpoint behind the in-page QR. Test suite: 348 passing.
+
 ## Security
 
 **Provider API keys** are stored in `data/chats.db` (gitignored), server-side only. They are never included in `connection_list` broadcasts, never sent to the browser after being saved, and never logged. This is enforced at the store layer — `listConnections` / `getConnection` return `ConnectionMeta` which omits `apiKey`; only `getConnectionWithSecret` (used internally by the hub to instantiate a provider) returns the key.
@@ -263,3 +278,7 @@ npx tsx scripts/e2e-multichat.mjs # local-agent multi-chat + persistence + resum
 ```
 
 The e2e scripts boot the server against a throwaway temp database on a dedicated port, so they never touch `data/chats.db`.
+
+## License
+
+[MIT](LICENSE) © 2026 Gaxia-XP.
