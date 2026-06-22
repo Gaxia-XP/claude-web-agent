@@ -279,6 +279,10 @@ npx tsx scripts/e2e-multichat.mjs # local-agent multi-chat + persistence + resum
 
 The e2e scripts boot the server against a throwaway temp database on a dedicated port, so they never touch `data/chats.db`.
 
+## Issues
+
+Found a bug or have a feature request? Open an issue at <https://github.com/Gaxia-XP/claude-web-agent/issues>.
+
 ## License
 
 [MIT](LICENSE) © 2026 Gaxia-XP.
