@@ -56,7 +56,11 @@ export function registerOpenAiCompat(app: FastifyInstance, deps: CompatDeps): vo
     }
 
     const ac = new AbortController()
-    req.raw.on('close', () => ac.abort()) // client disconnect -> abort the provider run
+    // Abort on real client disconnect. Must listen on reply.raw (the ServerResponse) — NOT req.raw
+    // (the IncomingMessage), whose 'close' fires the moment the request BODY is fully read, mid-turn,
+    // which would abort the provider run before it produces any output (empty 200). reply.raw 'close'
+    // fires only when the response/connection actually ends. Mirrors openSseStream's wiring.
+    reply.raw.on('close', () => ac.abort())
     let out
     try {
       out = await executeCompatTurn({ ...resolved, messages: parsed.messages, signal: ac.signal, turnTimeoutMs: deps.turnTimeoutMs })

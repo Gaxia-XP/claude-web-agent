@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { openDb } from '../store'
 import { makeProvider } from '../providers/index'
+import { LocalAgentProvider } from '../providers/localAgent'
 import { registerOpenAiCompat } from './openai'
 
 function app(): FastifyInstance {
@@ -116,6 +117,59 @@ describe('compat openai /v1/chat/completions', () => {
     expect(body).toContain('exploded')
     expect(body).not.toContain('"finish_reason":"stop"') // must NOT masquerade as a normal completion
     expect(body.trimEnd().endsWith('data: [DONE]')).toBe(true)
+  })
+
+  // Regression (real socket): the non-stream route must NOT abort the provider run before it finishes.
+  // The bug listened on req.raw 'close' (IncomingMessage closes when the request BODY is read, mid-turn)
+  // instead of reply.raw 'close' (the response/connection — the real client-disconnect signal). A
+  // provider that yields to the event loop and observes ctx.signal returned EMPTY because it was aborted
+  // prematurely. This only reproduces over a REAL socket (app.inject's mock request never fires the
+  // premature 'close'), so this test does a real listen + fetch.
+  it('non-stream over a real socket does not abort the provider before it completes', async () => {
+    const slow = {
+      type: 'slow',
+      async send(params: { userText: string }, ctx: { signal: AbortSignal }) {
+        await new Promise((r) => setTimeout(r, 30)) // yield so a premature req-close abort can race in
+        if (ctx.signal.aborted) return { text: '' }  // the bug's symptom: aborted mid-turn -> empty
+        return { text: 'DONE ' + params.userText, usage: { outputTokens: 1 } }
+      },
+    }
+    const a = Fastify()
+    registerOpenAiCompat(a, { db: openDb(':memory:'), makeProvider: () => slow as never })
+    await a.listen({ port: 0, host: '127.0.0.1' })
+    try {
+      const { port } = a.server.address() as { port: number }
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: false }),
+      })
+      const body = (await res.json()) as { choices: Array<{ message: { content: string } }> }
+      expect(body.choices[0].message.content).toBe('DONE x') // '' on the buggy req.raw-close wiring
+    } finally {
+      await a.close()
+    }
+  })
+
+  // FIX1 end-to-end through the compat route: a real LocalAgentProvider fed an SDK result with
+  // is_error:true (subtype 'success') must throw -> runTurn error event -> compat maps to 500 with the
+  // API-error detail. Guards the full path, not just the provider unit (localAgent.test.ts) in isolation.
+  it('a local-agent is_error result surfaces as a 500 through the compat route', async () => {
+    function isErrorQuery() {
+      async function* gen() {
+        yield { type: 'system', subtype: 'init', session_id: 's' }
+        yield { type: 'result', subtype: 'success', is_error: true, api_error_status: 529, result: 'API Error: 529 Overloaded.' }
+      }
+      return Object.assign(gen(), { interrupt: async () => {} })
+    }
+    const a = Fastify()
+    registerOpenAiCompat(a, { db: openDb(':memory:'), makeProvider: () => new LocalAgentProvider(isErrorQuery as never) })
+    const res = await a.inject({
+      method: 'POST', url: '/v1/chat/completions',
+      payload: { model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }], stream: false },
+    })
+    expect(res.statusCode).toBe(500)
+    expect((res.json() as { error: { message: string } }).error.message).toMatch(/529/)
   })
 
   it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {

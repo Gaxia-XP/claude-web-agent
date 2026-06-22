@@ -1,4 +1,4 @@
-import { listConnections, getConnectionWithSecret, type ConnectionWithSecret, type DB } from '../store'
+import { listConnections, getConnectionWithSecret, DEFAULT_CONNECTION_ID, type ConnectionWithSecret, type DB } from '../store'
 import type { ProviderConfig } from '../providers/index'
 import type { PermissionPolicy } from '../permission'
 
@@ -28,6 +28,16 @@ export function parseModelId(id: string): ParsedModelId | null {
 export function resolveConnectionByName(db: DB, name: string): ConnectionWithSecret | undefined {
   const meta = listConnections(db).find((c) => c.name === name)
   return meta ? getConnectionWithSecret(db, meta.id) : undefined
+}
+
+// A bare model id (no '/') carries no connection prefix — it is the lenient input third-party
+// clients (LMSA, OpenAI SDK) send (just 'sonnet', 'claude-opus-4-7', ...). Route it to the default
+// local-agent connection: prefer the seeded DEFAULT_CONNECTION_ID, else the first local-agent
+// connection in creation order. Returns undefined when no local-agent connection exists.
+export function defaultLocalAgentConnection(db: DB): ConnectionWithSecret | undefined {
+  const conns = listConnections(db).filter((c) => c.type === 'local-agent')
+  const preferred = conns.find((c) => c.id === DEFAULT_CONNECTION_ID) ?? conns[0]
+  return preferred ? getConnectionWithSecret(db, preferred.id) : undefined
 }
 
 // makeProvider config from a resolved connection + the requested model (passed through as the default).

@@ -33,6 +33,10 @@ const hub = new ChatHub({
   turnTimeoutMs: TURN_TIMEOUT_MS,
 })
 
+// Computed before buildApp so it can be served via GET /api/lan-urls (the in-page QR source)
+// and reused for the console banner below.
+const urls = lanUrls(networkInterfaces(), PORT)
+
 const webDist = join(process.cwd(), 'web/dist')
 const { app } = buildApp({
   db,
@@ -41,13 +45,13 @@ const { app } = buildApp({
   token,
   turnTimeoutMs: TURN_TIMEOUT_MS,
   webDist,
+  lanUrls: urls,
 })
 
 await app.listen({ port: PORT, host: HOST })
 
 // Banner via console.log (NOT the Fastify logger) so it prints as plain,
 // scrapable lines. e2e-multichat.mjs keys on the substring 'listening on'.
-const urls = lanUrls(networkInterfaces(), PORT)
 const allUrls = [`http://localhost:${PORT}`, ...urls]
 console.log('')
 console.log('  Claude Web Agent is up.')

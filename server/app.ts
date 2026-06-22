@@ -21,6 +21,9 @@ export interface BuildAppDeps {
   token: string
   turnTimeoutMs?: number
   webDist?: string
+  // LAN-reachable base URLs (http://<ip>:<port>) the server is listening on, for the in-page QR.
+  // index.ts computes these from os.networkInterfaces(); tests/dev may omit them (-> []).
+  lanUrls?: string[]
 }
 
 // Decode a raw request URL path once, for use in the auth guard. Returns the decoded path
@@ -91,6 +94,11 @@ export function buildApp(deps: BuildAppDeps): { app: FastifyInstance; wss: WebSo
 
   // /api/health is allowlisted above; register it here (moved out of index.ts in M6) so the route exists.
   app.get('/api/health', async () => ({ status: pingMessage() }))
+
+  // Token-guarded (NOT allowlisted — it's /api/*): the dashboard's Settings panel reads this to build
+  // a QR that points at a LAN ip instead of localhost when opened on the server box. Empty when no LAN
+  // interface was found.
+  app.get('/api/lan-urls', async () => ({ urls: deps.lanUrls ?? [] }))
 
   registerHttpApi(app, { hub, db })
   registerCompatApi(app, { db, makeProvider, turnTimeoutMs })

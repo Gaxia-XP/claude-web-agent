@@ -103,6 +103,35 @@ describe('compat anthropic /v1/messages', () => {
     expect(res.body).toMatch(/"usage":\{"input_tokens":2,"output_tokens":3\}/)
   })
 
+  // Regression (real socket): same bug/fix as the OpenAI route — abort must hang off reply.raw 'close',
+  // not req.raw 'close' (which fires when the request BODY is read, aborting the turn before it produces
+  // output -> empty 200). Only reproduces over a real socket (see openai.test.ts for the full rationale).
+  it('non-stream over a real socket does not abort the provider before it completes', async () => {
+    const slow = {
+      type: 'slow',
+      async send(params: { userText: string }, ctx: { signal: AbortSignal }) {
+        await new Promise((r) => setTimeout(r, 30))
+        if (ctx.signal.aborted) return { text: '' }
+        return { text: 'DONE ' + params.userText, usage: { outputTokens: 1 } }
+      },
+    }
+    const a = Fastify()
+    registerAnthropicCompat(a, { db: openDb(':memory:'), makeProvider: () => slow as never })
+    await a.listen({ port: 0, host: '127.0.0.1' })
+    try {
+      const { port } = a.server.address() as { port: number }
+      const res = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'local/sonnet', messages: [{ role: 'user', content: 'x' }] }),
+      })
+      const body = (await res.json()) as { content: Array<{ type: string; text: string }> }
+      expect(body.content).toEqual([{ type: 'text', text: 'DONE x' }]) // '' on the buggy req.raw-close wiring
+    } finally {
+      await a.close()
+    }
+  })
+
   it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {
     let sawAbort = false
     const hang = {
