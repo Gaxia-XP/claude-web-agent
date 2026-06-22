@@ -2,6 +2,8 @@
 
 Local web app for chatting with Claude across multiple providers — full agent mode (local-agent), Anthropic API (stateless chat), or any OpenAI-compatible endpoint (OpenRouter, Ollama, etc.).
 
+> **New here / on Windows?** See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — install, run, reach it from your phone, and start the server automatically at logon.
+
 ## Security / Run (LAN + auth)
 
 The server binds **`0.0.0.0`** by default so you can reach it from other devices on your LAN
