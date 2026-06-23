@@ -25,7 +25,7 @@ export function FolderPicker({
       <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b p-4">
           <h2 className="text-lg font-semibold">เลือกโฟลเดอร์</h2>
-          <button className="text-gray-400 hover:text-gray-700" title="ปิด" onClick={onClose}>
+          <button className="text-gray-500 hover:text-gray-700" aria-label="ปิด" title="ปิด" onClick={onClose}>
             ✕
           </button>
         </div>
@@ -61,7 +61,7 @@ export function FolderPicker({
             </p>
           )}
           {state.entries.length === 0 ? (
-            <p className="px-2 py-4 text-center text-sm text-gray-400">ไม่มีโฟลเดอร์ย่อย</p>
+            <p className="px-2 py-4 text-center text-sm text-gray-500">ไม่มีโฟลเดอร์ย่อย</p>
           ) : (
             <ul className="space-y-0.5">
               {state.entries.map((entry) => (

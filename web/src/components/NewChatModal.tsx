@@ -33,7 +33,7 @@ export function NewChatModal({
       <div className="flex w-full max-w-md flex-col gap-3 rounded-xl bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">แชทใหม่</h2>
-          <button className="text-gray-400 hover:text-gray-700" title="ปิด" onClick={onClose}>
+          <button className="text-gray-500 hover:text-gray-700" aria-label="ปิด" title="ปิด" onClick={onClose}>
             ✕
           </button>
         </div>

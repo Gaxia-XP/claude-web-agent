@@ -25,14 +25,14 @@ export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSe
       />
       {disabled ? (
         <button
-          className="min-h-[44px] shrink-0 rounded-lg bg-red-500 px-4 py-2 text-white"
+          className="min-h-[44px] shrink-0 rounded-lg bg-red-600 px-4 py-2 text-white hover:bg-red-700"
           onClick={onStop}
         >
           Stop
         </button>
       ) : (
         <button
-          className="min-h-[44px] shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-white"
+          className="min-h-[44px] shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
           onClick={submit}
         >
           ส่ง

@@ -6,3 +6,4 @@ logs/
 *.log
 .env
 .token
+.impeccable/live/sessions/

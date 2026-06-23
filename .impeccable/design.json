@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-23T00:00:00Z",
+  "title": "Design System: Claude Web Agent",
+  "extensions": {
+    "colorMeta": {
+      "accent-blue": { "role": "primary", "displayName": "Intent Blue", "canonical": "#2563eb", "tonalRamp": ["#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#dbeafe"] },
+      "accent-tint": { "role": "primary", "displayName": "Selection Tint", "canonical": "#dbeafe", "tonalRamp": ["#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#dbeafe"] },
+      "focus-ring": { "role": "primary", "displayName": "Focus Ring", "canonical": "#60a5fa", "tonalRamp": ["#1e3a8a", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#bfdbfe", "#eff6ff"] },
+      "canvas": { "role": "neutral", "displayName": "Canvas", "canonical": "#f9fafb", "tonalRamp": ["#111827", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#d1d5db", "#e5e7eb", "#f9fafb"] },
+      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "#ffffff", "tonalRamp": ["#111827", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#e5e7eb", "#f3f4f6", "#ffffff"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#111827", "tonalRamp": ["#111827", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#d1d5db", "#e5e7eb", "#f9fafb"] },
+      "faint": { "role": "neutral", "displayName": "Faint (text floor)", "canonical": "#6b7280", "tonalRamp": ["#111827", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#d1d5db", "#e5e7eb", "#f9fafb"] },
+      "agent-tint": { "role": "secondary", "displayName": "Agent Tint", "canonical": "#fffbeb", "tonalRamp": ["#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fcd34d", "#fde68a", "#fffbeb"] },
+      "agent-ink": { "role": "secondary", "displayName": "Agent Ink", "canonical": "#92400e", "tonalRamp": ["#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fcd34d", "#fde68a", "#fffbeb"] },
+      "danger": { "role": "danger", "displayName": "Danger", "canonical": "#dc2626", "tonalRamp": ["#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fecaca", "#fef2f2"] },
+      "danger-ink": { "role": "danger", "displayName": "Danger Ink", "canonical": "#991b1b", "tonalRamp": ["#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fecaca", "#fef2f2"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "App name in the header, page titles, modal headings." },
+      "body": { "displayName": "Body", "purpose": "Message content (rendered markdown), inputs, the chat textarea." },
+      "ui": { "displayName": "UI", "purpose": "Default control text: buttons, list rows, connection meta." },
+      "label": { "displayName": "Label", "purpose": "Form field labels." },
+      "meta": { "displayName": "Meta", "purpose": "Timestamps, hints, harness panel helper lines. 12px floor." },
+      "mono": { "displayName": "Mono", "purpose": "Literal copy/paste strings only: tokens, URLs, cwd paths, tool JSON." }
+    },
+    "shadows": [
+      { "name": "raised", "value": "0 1px 2px rgba(0,0,0,0.05)", "purpose": "The standalone Login card floating on an empty screen (shadow-sm)." },
+      { "name": "drawer", "value": "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)", "purpose": "The mobile slide-in nav drawer (shadow-lg); flat/docked at md+." },
+      { "name": "modal", "value": "0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)", "purpose": "Permission and New Chat dialogs, the highest layer (shadow-xl)." }
+    ],
+    "motion": [
+      { "name": "control", "value": "150ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Button/background/color state transitions (ease-out-quint)." },
+      { "name": "drawer", "value": "200ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Mobile nav drawer slide-in transform." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single high-intent action: send, create, save, the empty-state CTA.",
+      "html": "<button class=\"ds-btn-primary\">ส่ง</button>",
+      "css": ".ds-btn-primary { min-height: 2.75rem; padding: 0.5rem 1rem; border: none; border-radius: 0.5rem; background: #2563eb; color: #fff; font: 500 0.875rem/1.4 ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: #1d4ed8; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #60a5fa; } .ds-btn-primary:disabled { opacity: 0.4; cursor: default; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Cancel, close, Settings, copy, Browse. Quiet, bordered, never competes with primary.",
+      "html": "<button class=\"ds-btn-secondary\">ยกเลิก</button>",
+      "css": ".ds-btn-secondary { min-height: 2.75rem; padding: 0.5rem 1rem; border: 1px solid #e5e7eb; border-radius: 0.5rem; background: #fff; color: #374151; font: 400 0.875rem/1.4 ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-secondary:hover { background: #f3f4f6; } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 2px #60a5fa; }"
+    },
+    {
+      "name": "Stop / Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "The in-flight Stop button; also the model for destructive confirm actions.",
+      "html": "<button class=\"ds-btn-danger\">Stop</button>",
+      "css": ".ds-btn-danger { min-height: 2.75rem; padding: 0.5rem 1rem; border: none; border-radius: 0.5rem; background: #dc2626; color: #fff; font: 500 0.875rem/1.4 ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-danger:hover { background: #b91c1c; } .ds-btn-danger:focus-visible { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #f87171; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Token / name / URL / cwd fields. Mono variant for copy/paste strings; password for secrets.",
+      "html": "<input class=\"ds-input\" placeholder=\"วาง token ที่นี่\" />",
+      "css": ".ds-input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #e5e7eb; border-radius: 0.5rem; background: #fff; color: #111827; font: 400 1rem/1.5 ui-sans-serif, system-ui, sans-serif; outline: none; } .ds-input::placeholder { color: #6b7280; } .ds-input:focus-visible { box-shadow: 0 0 0 2px #60a5fa; border-color: transparent; }"
+    },
+    {
+      "name": "User Message Bubble",
+      "kind": "custom",
+      "refersTo": "message-user",
+      "description": "The operator's own turn: solid blue, right-aligned, capped width.",
+      "html": "<div class=\"ds-msg-user\">รันเทสต์ให้หน่อย</div>",
+      "css": ".ds-msg-user { max-width: 88%; margin-left: auto; padding: 0.5rem 1rem; border-radius: 1rem; background: #2563eb; color: #fff; font: 400 1rem/1.6 ui-sans-serif, system-ui, sans-serif; word-break: break-word; }"
+    },
+    {
+      "name": "Assistant Message Bubble",
+      "kind": "custom",
+      "refersTo": "message-assistant",
+      "description": "Claude's turn: sunken neutral, ink text, left-aligned, rendered markdown.",
+      "html": "<div class=\"ds-msg-assistant\">เรียบร้อย เทสต์ผ่าน 348/348</div>",
+      "css": ".ds-msg-assistant { max-width: 88%; margin-right: auto; padding: 0.5rem 1rem; border-radius: 1rem; background: #f3f4f6; color: #111827; font: 400 1rem/1.6 ui-sans-serif, system-ui, sans-serif; word-break: break-word; }"
+    },
+    {
+      "name": "Tool Card",
+      "kind": "card",
+      "refersTo": "tool-card",
+      "description": "Inline amber card when the local-agent calls a tool. Amber = the machine is acting.",
+      "html": "<div class=\"ds-tool-card\"><span class=\"ds-tool-name\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg> Bash</span><pre class=\"ds-tool-args\">{ \"command\": \"npm test\" }</pre></div>",
+      "css": ".ds-tool-card { margin: 0.25rem 0; padding: 0.5rem 0.75rem; border: 1px solid #fcd34d; border-radius: 0.375rem; background: #fffbeb; font-size: 0.75rem; } .ds-tool-name { display: inline-flex; align-items: center; gap: 0.375rem; font-weight: 600; color: #92400e; } .ds-tool-args { margin: 0.25rem 0 0; overflow-x: auto; white-space: pre-wrap; color: #78350f; font: 400 0.75rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }"
+    },
+    {
+      "name": "Sidebar Item",
+      "kind": "nav",
+      "refersTo": "sidebar-item-active",
+      "description": "A chat row in the nav rail. Active = blue tint; inactive hover = neutral wash.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-item--active\">แก้บั๊ก compat</a><a class=\"ds-nav-item\">รีวิว PR</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 0.25rem; width: 16rem; padding: 0.5rem; background: #f9fafb; } .ds-nav-item { display: block; padding: 0.5rem; border-radius: 0.5rem; color: #111827; font: 400 0.875rem/1.4 ui-sans-serif, system-ui, sans-serif; text-decoration: none; cursor: pointer; } .ds-nav-item:hover { background: #e5e7eb; } .ds-nav-item--active { background: #dbeafe; color: #1e3a8a; } .ds-nav-item:focus-visible { outline: none; box-shadow: 0 0 0 2px #60a5fa; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Calm Console",
+    "overview": "A chat app first and an operator's console second, both true at once. In front: a clean, friendly conversation surface in the lineage of Claude.ai and ChatGPT, the message stream is the page and everything else recedes. Behind it: a real console that can run an agent which reads, writes, and executes on the host, reachable from a phone on the LAN or a stranger on a tunnel, so the design never lets the power go invisible. The palette is restrained by intent: a near-white canvas, white surfaces, one blue that means primary/selection/focus and nothing decorative, a disciplined gray ramp for text, with amber for agent activity and red for danger. Type is a single system sans at a fixed rem scale with a monospace channel for copy/paste material. Surfaces are flat at rest and earn shadow only as they rise off the page.",
+    "keyCharacteristics": [
+      "Chat foreground, console background: the conversation dominates; power stays legible, never loud.",
+      "One blue, used only for intent (primary action, selection, focus), never decoration.",
+      "Meaningful color only: amber = agent activity, red = danger, blue = intent.",
+      "Fixed rem type scale, system sans, with a monospace channel for copy/paste material.",
+      "Flat by default; elevation rises with the component (border to shadow-sm to shadow-lg to shadow-xl).",
+      "Legibility is non-negotiable: every text/background pair clears WCAG AA."
+    ],
+    "rules": [
+      { "name": "The One Blue Rule", "body": "There is exactly one accent hue. Blue marks intent (primary action), selection (current chat), and focus (keyboard ring), and is forbidden as decoration. If a blue rectangle is not clickable, selected, or focused, it is wrong.", "section": "colors" },
+      { "name": "The Floor Rule", "body": "#6b7280 (Faint) is the lightest gray any text may use. #9ca3af and below are for non-text only. Text on tint follows the same AA bar as text on white.", "section": "colors" },
+      { "name": "The 12px Floor Rule", "body": "0.75rem (12px) is the smallest type in the system. Sub-12px sizes are prohibited; they fail the readable-text floor and the mobile audience who use the QR/harness panel.", "section": "typography" },
+      { "name": "The Mono-Means-Copy Rule", "body": "Monospace is reserved for literal copy/paste strings (tokens, URLs, cwd, tool JSON). Never use it for emphasis or flavor.", "section": "typography" },
+      { "name": "The Earned-Shadow Rule", "body": "A surface gets a shadow only when it has physically left the page (a floating card, a drawer, a modal). Flat inline content uses a hairline border, never a shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep every text/background pair at WCAG AA — body >= 4.5:1, large/bold >= 3:1, placeholders at the same 4.5:1. When a gray is even close, step it toward Ink.",
+      "Do keep #6b7280 (Faint) as the lightest text, on white and on tint alike. #9ca3af and below are non-text only.",
+      "Do keep type at 12px and up; the people using the QR/harness panel are often on a phone.",
+      "Do give every interactive element a visible 2px Focus Ring (#60a5fa) and a working keyboard path; icon-only controls get an aria-label.",
+      "Do keep touch targets >= 44x44px on the mobile surface; reveal row actions on focus and touch, not hover alone.",
+      "Do reserve monospace for literal copy/paste strings (tokens, URLs, cwd, tool JSON).",
+      "Do let color mean one thing: blue = intent, amber = agent activity, red = danger.",
+      "Do keep transitions in the 150-250ms band with ease-out; honor prefers-reduced-motion."
+    ],
+    "donts": [
+      "Don't ship the generic AI SaaS look: no cream/sand/parchment backgrounds, no identical card grids, no gradient text, no tracked-uppercase eyebrow over every panel, no hero-metric template.",
+      "Don't go gaudy or motion-heavy: no full-saturation accents at rest, no decorative animation that doesn't convey state, no glassmorphism, no bounce/elastic easing.",
+      "Don't go cramped or sluggish: no dense unreadable text, no muted gray on tinted near-white, no transition slow enough to make the operator wait.",
+      "Don't put gray text on a colored fill; use white or a tint of the fill's own hue.",
+      "Don't use blue except for intent/selection/focus. A non-interactive blue rectangle is a bug.",
+      "Don't rely on hover-only affordances for primary row actions; they vanish on touch and for keyboard users.",
+      "Don't drop below the 44px touch target or the 12px type floor for any interactive or text-bearing element."
+    ]
+  }
+}

@@ -178,7 +178,7 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
       )}
       <div
         className={
-          'fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 md:static md:z-auto md:translate-x-0 ' +
+          'fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 motion-reduce:transition-none md:static md:z-auto md:translate-x-0 ' +
           (navOpen ? 'translate-x-0' : '-translate-x-full')
         }
       >
@@ -224,7 +224,7 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
             <Composer disabled={view.streaming} onSend={send} onStop={stop} />
           </>
         ) : activeId ? (
-          <div className="flex flex-1 items-center justify-center bg-gray-50 text-gray-400">กำลังโหลด…</div>
+          <div className="flex flex-1 items-center justify-center bg-gray-50 text-gray-500">กำลังโหลด…</div>
         ) : (
           <div className="flex flex-1 items-center justify-center bg-gray-50 text-gray-500">
             <div className="text-center">
