@@ -374,7 +374,7 @@ export function Settings({
           <div className="flex flex-col gap-1">
             <div className="text-xs font-medium text-gray-500">Model ids (compat)</div>
             {modelError ? (
-              <p className="text-xs text-red-500">{modelError}</p>
+              <p className="text-xs text-red-600">{modelError}</p>
             ) : modelIds === null ? (
               <p className="text-xs text-gray-500">กำลังโหลด…</p>
             ) : modelIds.length === 0 ? (
