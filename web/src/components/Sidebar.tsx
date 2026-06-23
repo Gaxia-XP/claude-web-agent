@@ -40,7 +40,7 @@ export function Sidebar({
       </div>
       <nav className="flex-1 overflow-y-auto p-2">
         {chats.length === 0 ? (
-          <p className="px-2 py-4 text-center text-sm text-gray-400">ยังไม่มีแชท</p>
+          <p className="px-2 py-4 text-center text-sm text-gray-500">ยังไม่มีแชท</p>
         ) : (
           <ul className="space-y-1">
             {chats.map((chat) => {
@@ -49,7 +49,7 @@ export function Sidebar({
                 <li
                   key={chat.id}
                   className={
-                    'group flex items-center gap-1 rounded-lg px-2 py-2 text-sm ' +
+                    'flex items-center gap-1 rounded-lg px-2 py-2 text-sm ' +
                     (active ? 'bg-blue-100 text-blue-900' : 'hover:bg-gray-200')
                   }
                 >
@@ -61,14 +61,16 @@ export function Sidebar({
                     {chat.title}
                   </button>
                   <button
-                    className="shrink-0 rounded px-1 text-gray-400 opacity-0 hover:text-gray-700 group-hover:opacity-100"
+                    className="shrink-0 rounded p-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                    aria-label={`เปลี่ยนชื่อแชท ${chat.title}`}
                     title="เปลี่ยนชื่อ"
                     onClick={() => handleRename(chat)}
                   >
                     ✎
                   </button>
                   <button
-                    className="shrink-0 rounded px-1 text-gray-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
+                    className="shrink-0 rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                    aria-label={`ลบแชท ${chat.title}`}
                     title="ลบ"
                     onClick={() => handleDelete(chat)}
                   >

@@ -31,6 +31,13 @@ describe('qr/qrCandidates', () => {
   it('drops blank entries', () => {
     expect(qrCandidates('http://localhost:8787', ['', '  '])).toEqual(['http://localhost:8787'])
   })
+  it('orders LAN urls best-reachable first (virtual/VPN ips sink below real LAN); origin stays first', () => {
+    expect(qrCandidates('http://localhost:8787', ['http://100.115.92.3:8787', 'http://192.168.1.2:8787'])).toEqual([
+      'http://localhost:8787',
+      'http://192.168.1.2:8787',
+      'http://100.115.92.3:8787',
+    ])
+  })
 })
 
 describe('qr/defaultQrBase', () => {
@@ -44,6 +51,24 @@ describe('qr/defaultQrBase', () => {
   })
   it('falls back to the origin when there are no LAN urls (even if loopback)', () => {
     expect(defaultQrBase('http://localhost:8787', [])).toBe('http://localhost:8787')
+  })
+  it('skips a CGNAT / Tailscale (100.64/10) address in favor of a real LAN ip', () => {
+    expect(defaultQrBase('http://localhost:8787', ['http://100.115.92.3:8787', 'http://192.168.1.2:8787'])).toBe(
+      'http://192.168.1.2:8787',
+    )
+  })
+  it('skips a link-local (169.254) address in favor of a real LAN ip', () => {
+    expect(defaultQrBase('http://localhost:8787', ['http://169.254.10.10:8787', 'http://10.0.0.5:8787'])).toBe(
+      'http://10.0.0.5:8787',
+    )
+  })
+  it('skips the VirtualBox host-only default (192.168.56.x) in favor of a real LAN ip', () => {
+    expect(defaultQrBase('http://localhost:8787', ['http://192.168.56.1:8787', 'http://192.168.1.20:8787'])).toBe(
+      'http://192.168.1.20:8787',
+    )
+  })
+  it('still returns a virtual address when it is the only LAN url under a loopback origin', () => {
+    expect(defaultQrBase('http://localhost:8787', ['http://100.115.92.3:8787'])).toBe('http://100.115.92.3:8787')
   })
 })
 

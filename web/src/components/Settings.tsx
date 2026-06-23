@@ -338,11 +338,11 @@ export function Settings({
             {qrSrc ? (
               <img src={qrSrc} alt="QR สำหรับ auto-login" className="h-44 w-44" />
             ) : (
-              <div className="flex h-44 w-44 items-center justify-center text-xs text-gray-400">
+              <div className="flex h-44 w-44 items-center justify-center text-xs text-gray-500">
                 กำลังสร้าง QR…
               </div>
             )}
-            <div className="w-full truncate text-center font-mono text-[10px] text-gray-500">{qrBase}</div>
+            <div className="w-full truncate text-center font-mono text-xs text-gray-500">{qrBase}</div>
             {qrBases.length > 1 && (
               <div className="flex flex-wrap justify-center gap-1">
                 {qrBases.map((c) => {
@@ -355,7 +355,7 @@ export function Settings({
                   return (
                     <button
                       key={c}
-                      className={`rounded-lg border px-2 py-1 text-[10px] ${c === qrBase ? 'bg-blue-600 text-white' : ''}`}
+                      className={`min-h-[28px] rounded-lg border px-2.5 py-1.5 text-xs ${c === qrBase ? 'bg-blue-600 text-white' : 'hover:bg-gray-100'}`}
                       onClick={() => setQrBase(c)}
                     >
                       {host}
@@ -365,7 +365,7 @@ export function Settings({
               </div>
             )}
             {hostIsLoopback(qrBase) && (
-              <p className="text-center text-[10px] text-amber-600">
+              <p className="text-center text-xs text-amber-700">
                 QR ชี้ไป localhost — มือถือจะเข้าไม่ได้ เปิดแดชบอร์ดผ่าน IP ของวง LAN หรือเลือกปุ่ม IP ด้านบน
               </p>
             )}
@@ -376,9 +376,9 @@ export function Settings({
             {modelError ? (
               <p className="text-xs text-red-500">{modelError}</p>
             ) : modelIds === null ? (
-              <p className="text-xs text-gray-400">กำลังโหลด…</p>
+              <p className="text-xs text-gray-500">กำลังโหลด…</p>
             ) : modelIds.length === 0 ? (
-              <p className="text-xs text-gray-400">ยังไม่มี model</p>
+              <p className="text-xs text-gray-500">ยังไม่มี model</p>
             ) : (
               <ul className="max-h-40 overflow-y-auto rounded-lg border bg-gray-50 p-2 font-mono text-xs">
                 {modelIds.map((id) => (

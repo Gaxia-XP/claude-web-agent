@@ -74,7 +74,7 @@ export function Login({ onAuthed }: { onAuthed: (token: string) => void }) {
           {busy ? 'กำลังเชื่อมต่อ…' : 'เชื่อมต่อ'}
         </button>
 
-        <p className="text-center text-xs text-gray-400">
+        <p className="text-center text-xs text-gray-500">
           สแกน QR จากหน้า Settings บนเครื่องที่รัน server เพื่อเข้าอัตโนมัติ
         </p>
       </div>
