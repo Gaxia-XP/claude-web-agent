@@ -16,7 +16,7 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       return new LocalAgentProvider()
     case 'anthropic-api':
       if (!cfg.apiKey) throw new Error('anthropic-api connection requires an api key')
-      return new AnthropicApiProvider({ apiKey: cfg.apiKey, defaultModel: cfg.defaultModel })
+      return new AnthropicApiProvider({ apiKey: cfg.apiKey, defaultModel: cfg.defaultModel, baseUrl: cfg.baseUrl })
     case 'openai-compatible':
       if (!cfg.baseUrl) throw new Error('openai-compatible connection requires a base url')
       return new OpenAICompatibleProvider({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, defaultModel: cfg.defaultModel })
