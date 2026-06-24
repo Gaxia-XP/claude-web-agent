@@ -3,7 +3,7 @@ import type { ServerMsg, ToolCall } from '../shared/protocol'
 import type { TurnOutcome } from './chatRuntime'
 import type { ChatHub } from './hub'
 import { PolicyPermissionResolver, type PermissionPolicy } from './permission'
-import { listConnections, listChats, getChat, listMessages, type DB } from './store'
+import { listConnections, listChats, getChat, listMessages, totalUsage, type DB } from './store'
 
 export interface HttpApiDeps {
   hub: ChatHub
@@ -144,6 +144,9 @@ async function runApiTurn(
 // not here — these routes assume the request already passed that hook.
 export function registerHttpApi(app: FastifyInstance, deps: HttpApiDeps): void {
   const { hub, db } = deps
+
+  // GET /api/usage — total token usage aggregated across all messages
+  app.get('/api/usage', async () => totalUsage(db))
 
   // GET /api/connections — public connection metadata (NEVER api_key)
   app.get('/api/connections', async () => ({ connections: listConnections(db) }))
