@@ -274,6 +274,22 @@ export function appendMessage(db: DB, m: StoredMessage & { chatId: string }): vo
   ).run(m.id, m.chatId, m.role, content, usage, m.createdAt)
 }
 
+export function totalUsage(db: DB): { inputTokens: number; outputTokens: number } {
+  const rows = db.prepare("SELECT usage FROM messages WHERE usage IS NOT NULL").all() as { usage: string }[]
+  let inputTokens = 0
+  let outputTokens = 0
+  for (const r of rows) {
+    try {
+      const u = JSON.parse(r.usage) as Usage
+      inputTokens += u.inputTokens ?? 0
+      outputTokens += u.outputTokens ?? 0
+    } catch {
+      // ignore unparseable usage rows (same tolerance as listMessages)
+    }
+  }
+  return { inputTokens, outputTokens }
+}
+
 type MessageDbRow = {
   id: string
   role: "user" | "assistant"

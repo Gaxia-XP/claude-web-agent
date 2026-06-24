@@ -174,3 +174,18 @@ describe('LocalAgentProvider', () => {
     await expect(gate).resolves.toBeUndefined()
   })
 })
+
+describe('LocalAgentProvider error status', () => {
+  it('attaches api_error_status as .status on the thrown error (so overloads are retryable)', async () => {
+    function apiErrorQuery(_opts: unknown) {
+      async function* gen() {
+        yield { type: 'system', subtype: 'init', session_id: 'sess-err' }
+        yield { type: 'result', subtype: 'success', is_error: true, api_error_status: 529, result: 'API Error: 529 Overloaded' }
+      }
+      return Object.assign(gen(), { interrupt: async () => {} })
+    }
+    const { ctx } = makeCtx()
+    const provider = new LocalAgentProvider(apiErrorQuery as never)
+    await expect(provider.send({ userText: 'x' }, ctx)).rejects.toMatchObject({ status: 529 })
+  })
+})

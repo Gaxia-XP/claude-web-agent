@@ -20,6 +20,7 @@ import {
   getChatSdkSession,
   appendMessage,
   listMessages,
+  totalUsage,
   DEFAULT_CONNECTION_ID,
   type DB,
 } from "./store"
@@ -279,5 +280,20 @@ describe("connections CRUD", () => {
     createConnection(db, { id: "c1", type: "anthropic-api", name: "A", apiKey: "k", defaultModel: "m", now: 1 })
     deleteConnection(db, "c1")
     expect(getConnection(db, "c1")).toBeUndefined()
+  })
+})
+
+describe("totalUsage", () => {
+  it("sums input/output across all messages, ignoring null and unparseable usage", () => {
+    const db = openDb(":memory:")
+    const chat = createChat(db, { id: "c1", title: "T", connectionId: "local", model: "sonnet", now: 1 })
+    appendMessage(db, { chatId: chat.id, id: "u1", role: "user", content: [{ type: "text", text: "hi" }], createdAt: 0 })
+    appendMessage(db, { chatId: chat.id, id: "a1", role: "assistant", content: [{ type: "text", text: "x" }], usage: { inputTokens: 10, outputTokens: 2 }, createdAt: 1 })
+    appendMessage(db, { chatId: chat.id, id: "a2", role: "assistant", content: [{ type: "text", text: "y" }], usage: { inputTokens: 5, outputTokens: 3 }, createdAt: 2 })
+    // a row with unparseable usage must be ignored (not throw)
+    db.prepare(`INSERT INTO messages (id, chat_id, role, content, usage, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      "bad", chat.id, "assistant", '[{"type":"text","text":"z"}]', "{not json", 3,
+    )
+    expect(totalUsage(db)).toEqual({ inputTokens: 15, outputTokens: 5 })
   })
 })

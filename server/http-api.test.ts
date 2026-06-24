@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
-import { openDb, listChats, createChat, DEFAULT_CONNECTION_ID } from './store'
+import { openDb, listChats, createChat, appendMessage, DEFAULT_CONNECTION_ID } from './store'
 import { FakeProvider } from './providers/fake'
 import { ChatHub } from './hub'
 import { registerHttpApi, serverMsgToSse } from './http-api'
@@ -268,5 +268,16 @@ describe('http-api stream (SSE) + cancelled-turn signalling', () => {
     holder.release?.() // release turn#1 so the runtime drains cleanly
     const outcome = await second
     expect(outcome).toEqual({ text: '', cancelled: true })
+  })
+})
+
+describe('GET /api/usage', () => {
+  it('returns the summed token usage across messages', async () => {
+    const { app, db } = makeApp()
+    const chat = createChat(db, { id: 'usage-chat', title: 'T', connectionId: DEFAULT_CONNECTION_ID, model: 'sonnet', now: 1 })
+    appendMessage(db, { chatId: chat.id, id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'x' }], usage: { inputTokens: 7, outputTokens: 1 }, createdAt: 1 })
+    const res = await app.inject({ method: 'GET', url: '/api/usage' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ inputTokens: 7, outputTokens: 1 })
   })
 })

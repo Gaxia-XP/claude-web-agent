@@ -7,6 +7,7 @@ import {
   dequeuePending,
   activePrompt,
   closeFolder,
+  awaitingFirstToken,
   type AppState,
 } from './appState'
 import type { ChatMeta, StoredMessage, ConnectionMeta } from '@shared/protocol'
@@ -419,5 +420,68 @@ describe('appState', () => {
     expect(s.views.c1.streaming).toBe(false)
     const errors = s.views.c1.messages.filter((m) => m.role === 'error')
     expect(errors).toEqual([{ role: 'error', text: 'turn failed' }])
+  })
+})
+
+describe('per-turn usage', () => {
+  it('turn_done attaches usage to the last assistant message and clears streaming', () => {
+    let s = appendUser(initialAppState, 'c1', 'hi')
+    s = applyServer(s, { type: 'assistant_delta', chatId: 'c1', text: 'Hello' })
+    s = applyServer(s, { type: 'turn_done', chatId: 'c1', usage: { inputTokens: 10, outputTokens: 2 } })
+    expect(s.views['c1'].messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      text: 'Hello',
+      usage: { inputTokens: 10, outputTokens: 2 },
+    })
+    expect(s.views['c1'].streaming).toBe(false)
+  })
+  it('turn_done without usage just clears streaming (no usage field added)', () => {
+    let s = appendUser(initialAppState, 'c1', 'hi')
+    s = applyServer(s, { type: 'assistant_delta', chatId: 'c1', text: 'Hi' })
+    s = applyServer(s, { type: 'turn_done', chatId: 'c1' })
+    const last = s.views['c1'].messages.at(-1) as { usage?: unknown }
+    expect(last.usage).toBeUndefined()
+    expect(s.views['c1'].streaming).toBe(false)
+  })
+  it('chat_history surfaces a stored assistant message usage', () => {
+    const s = applyServer(initialAppState, {
+      type: 'chat_history',
+      chatId: 'c1',
+      messages: [
+        { id: 'u1', role: 'user', content: [{ type: 'text', text: 'hi' }], createdAt: 0 },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'yo' }],
+          usage: { inputTokens: 5, outputTokens: 1 },
+          createdAt: 1,
+        },
+      ],
+    })
+    expect(s.views['c1'].messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      text: 'yo',
+      usage: { inputTokens: 5, outputTokens: 1 },
+    })
+  })
+})
+
+describe('awaitingFirstToken', () => {
+  it('true while streaming with no assistant output yet (last message is the user)', () => {
+    expect(awaitingFirstToken({ messages: [{ role: 'user', text: 'hi' }], streaming: true })).toBe(true)
+  })
+  it('true while streaming with an empty view', () => {
+    expect(awaitingFirstToken({ messages: [], streaming: true })).toBe(true)
+  })
+  it('false once the assistant has started (last message is the assistant)', () => {
+    expect(
+      awaitingFirstToken({
+        messages: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'H', tools: [] }],
+        streaming: true,
+      }),
+    ).toBe(false)
+  })
+  it('false when not streaming', () => {
+    expect(awaitingFirstToken({ messages: [{ role: 'user', text: 'hi' }], streaming: false })).toBe(false)
   })
 })

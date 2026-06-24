@@ -24,6 +24,11 @@ export function Message({ msg }: { msg: UiMessage }) {
         <div className="prose prose-sm max-w-none break-words">
           <ReactMarkdown>{msg.text}</ReactMarkdown>
         </div>
+        {!isUser && msg.role === 'assistant' && msg.usage && (msg.usage.inputTokens !== undefined || msg.usage.outputTokens !== undefined) && (
+          <div className="mt-1 text-xs text-gray-500">
+            ↑ {msg.usage.inputTokens ?? '–'} &nbsp; ↓ {msg.usage.outputTokens ?? '–'}
+          </div>
+        )}
       </div>
     </div>
   )

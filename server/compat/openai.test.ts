@@ -154,6 +154,8 @@ describe('compat openai /v1/chat/completions', () => {
   // FIX1 end-to-end through the compat route: a real LocalAgentProvider fed an SDK result with
   // is_error:true (subtype 'success') must throw -> runTurn error event -> compat maps to 500 with the
   // API-error detail. Guards the full path, not just the provider unit (localAgent.test.ts) in isolation.
+  // With transient-retry wired into runTurn, a 529 is retried up to 3 times (1s+2s+4s backoff)
+  // before the error surfaces. Timeout raised to 10s to cover the full retry window.
   it('a local-agent is_error result surfaces as a 500 through the compat route', async () => {
     function isErrorQuery() {
       async function* gen() {
@@ -170,7 +172,7 @@ describe('compat openai /v1/chat/completions', () => {
     })
     expect(res.statusCode).toBe(500)
     expect((res.json() as { error: { message: string } }).error.message).toMatch(/529/)
-  })
+  }, 10000)
 
   it('(D) on a turn timeout the route aborts the lingering provider run (no detached leak)', async () => {
     let sawAbort = false

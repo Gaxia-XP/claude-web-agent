@@ -1,6 +1,7 @@
 import type { ServerMsg } from '../shared/protocol'
 import type { PermissionResolver } from './permission'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './providers/types'
+import { sendWithRetry } from './retry'
 
 export interface RunDeps {
   chatId: string
@@ -31,13 +32,29 @@ export async function runTurn(provider: Provider, params: TurnParams, deps: RunD
     signal: deps.signal,
   }
 
+  // An internal controller that merges deps.signal with the turn timeout. Aborting it stops any
+  // retry sleep in sendWithRetry so retries do not outlive the turn once the timeout fires.
+  const turnAc = new AbortController()
+  const forwardAbort = () => turnAc.abort()
+  if (deps.signal.aborted) {
+    turnAc.abort()
+  } else {
+    deps.signal.addEventListener('abort', forwardAbort, { once: true })
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeoutPromise = new Promise<typeof TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs)
+    timer = setTimeout(() => {
+      turnAc.abort()
+      resolve(TIMED_OUT)
+    }, timeoutMs)
   })
 
   try {
-    const raced = await Promise.race([provider.send(params, ctx), timeoutPromise])
+    const raced = await Promise.race([
+      sendWithRetry(provider, params, ctx, { getEmitted: () => emitted, signal: turnAc.signal }),
+      timeoutPromise,
+    ])
 
     if (raced === TIMED_OUT) {
       deps.send({ type: 'error', chatId, message: 'turn timed out' })
@@ -57,5 +74,6 @@ export async function runTurn(provider: Provider, params: TurnParams, deps: RunD
     return { text: '' }
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    deps.signal.removeEventListener('abort', forwardAbort)
   }
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { OpenAICompatibleProvider, parseSseData, type FetchLike } from './openaiCompat'
 import type { ProviderContext } from './types'
+import { ProviderHttpError } from './types'
 import type { StoredMessage } from '../../shared/protocol'
 
 async function* chunks(...parts: string[]) {
@@ -120,5 +121,19 @@ describe('OpenAICompatibleProvider', () => {
     const { ctx: c } = ctx()
     await p.send({ userText: 'hi', history: userHistory }, c)
     expect(headers.authorization).toBeUndefined()
+  })
+})
+
+describe('OpenAICompatibleProvider error status', () => {
+  it('throws a ProviderHttpError carrying the upstream status on a non-ok response', async () => {
+    const fetchFn: FetchLike = async () => ({ ok: false, status: 503, body: null })
+    const p = new OpenAICompatibleProvider({ baseUrl: 'https://api.x/v1', defaultModel: 'm', fetchFn })
+    const { ctx: c } = ctx()
+    const err = await p.send({ userText: 'hi', history: userHistory }, c).then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(err).toBeInstanceOf(ProviderHttpError)
+    expect(err).toMatchObject({ status: 503 })
   })
 })

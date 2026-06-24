@@ -132,4 +132,7 @@ describe('makeAnthropicClient', () => {
       'https://api.maxplus-ai.cc',
     )
   })
+  it('disables the SDK built-in retries so the turn-level retry is the single authority', () => {
+    expect(makeAnthropicClient({ apiKey: 'sk' }).maxRetries).toBe(0)
+  })
 })

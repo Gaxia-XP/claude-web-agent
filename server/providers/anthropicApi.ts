@@ -32,7 +32,7 @@ export function makeAnthropicClient(opts: { apiKey: string; baseUrl?: string }):
   // Trim whitespace + trailing slashes: the SDK joins baseURL + '/v1/messages' verbatim, so a
   // trailing slash would build a double-slash path. Blank -> undefined keeps the SDK default.
   const baseURL = opts.baseUrl?.trim().replace(/\/+$/, '')
-  return new Anthropic({ apiKey: opts.apiKey, ...(baseURL ? { baseURL } : {}) })
+  return new Anthropic({ apiKey: opts.apiKey, maxRetries: 0, ...(baseURL ? { baseURL } : {}) })
 }
 
 export class AnthropicApiProvider implements Provider {

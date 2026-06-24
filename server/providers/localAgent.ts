@@ -105,7 +105,9 @@ export class LocalAgentProvider implements Provider {
               }
             } else {
               const detail = msg.is_error && typeof msg.result === 'string' ? msg.result : msg.subtype
-              throw new Error(`local-agent turn failed: ${detail}`)
+              const e = new Error(`local-agent turn failed: ${detail}`)
+              if (typeof msg.api_error_status === 'number') (e as { status?: number }).status = msg.api_error_status
+              throw e
             }
             break
           }
