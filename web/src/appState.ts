@@ -225,6 +225,15 @@ export function activePrompt(state: AppState): PermissionPrompt | undefined {
   return state.pendingQueue.find((p) => p.chatId === state.activeChatId)
 }
 
+// True while a turn is in flight (streaming) but the assistant has produced no output yet:
+// the assistant bubble is created lazily on the first delta/tool, so until then the last
+// message is the user's (or the view is empty). Drives the typing indicator.
+export function awaitingFirstToken(view: ChatView): boolean {
+  if (!view.streaming) return false
+  const last = view.messages[view.messages.length - 1]
+  return last === undefined || last.role === 'user'
+}
+
 export function dequeuePending(state: AppState, requestId: string): AppState {
   return { ...state, pendingQueue: state.pendingQueue.filter((p) => p.requestId !== requestId) }
 }

@@ -7,6 +7,7 @@ import {
   dequeuePending,
   activePrompt,
   closeFolder,
+  awaitingFirstToken,
   type AppState,
 } from './appState'
 import type { ChatMeta, StoredMessage, ConnectionMeta } from '@shared/protocol'
@@ -419,5 +420,25 @@ describe('appState', () => {
     expect(s.views.c1.streaming).toBe(false)
     const errors = s.views.c1.messages.filter((m) => m.role === 'error')
     expect(errors).toEqual([{ role: 'error', text: 'turn failed' }])
+  })
+})
+
+describe('awaitingFirstToken', () => {
+  it('true while streaming with no assistant output yet (last message is the user)', () => {
+    expect(awaitingFirstToken({ messages: [{ role: 'user', text: 'hi' }], streaming: true })).toBe(true)
+  })
+  it('true while streaming with an empty view', () => {
+    expect(awaitingFirstToken({ messages: [], streaming: true })).toBe(true)
+  })
+  it('false once the assistant has started (last message is the assistant)', () => {
+    expect(
+      awaitingFirstToken({
+        messages: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'H', tools: [] }],
+        streaming: true,
+      }),
+    ).toBe(false)
+  })
+  it('false when not streaming', () => {
+    expect(awaitingFirstToken({ messages: [{ role: 'user', text: 'hi' }], streaming: false })).toBe(false)
   })
 })
