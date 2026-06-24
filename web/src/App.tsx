@@ -8,6 +8,7 @@ import {
   closeFolder,
   setActiveChat,
   initialAppState,
+  awaitingFirstToken,
   type AppState,
 } from './appState'
 import { createWsClient, type WsStatus } from './ws'
@@ -18,6 +19,7 @@ import { Composer } from './components/Composer'
 import { PermissionModal } from './components/PermissionModal'
 import { NewChatModal, type NewChatDraft } from './components/NewChatModal'
 import { Settings, type ConnectionFormPayload } from './components/Settings'
+import { TypingIndicator } from './components/TypingIndicator'
 
 type Action =
   | { kind: 'server'; msg: ServerMsg }
@@ -220,6 +222,7 @@ export function App({ token, onLogout }: { token: string; onLogout: () => void }
               {view.messages.map((m, i) => (
                 <Message key={i} msg={m} />
               ))}
+              {awaitingFirstToken(view) && <TypingIndicator />}
             </div>
             <Composer disabled={view.streaming} onSend={send} onStop={stop} />
           </>
