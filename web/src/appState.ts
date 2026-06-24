@@ -5,11 +5,12 @@ import type {
   StoredMessage,
   DirEntry,
   ConnectionMeta,
+  Usage,
 } from '@shared/protocol'
 
 export type UiMessage =
   | { role: 'user'; text: string }
-  | { role: 'assistant'; text: string; tools: ToolCall[] }
+  | { role: 'assistant'; text: string; tools: ToolCall[]; usage?: Usage }
   | { role: 'error'; text: string }
 
 export type PermissionPrompt = {
@@ -79,8 +80,15 @@ function reduceView(view: ChatView, msg: ServerMsg): ChatView {
     }
     case 'tool_result':
       return view // ignored for render (tool results shown as cards only)
-    case 'turn_done':
-      return { ...view, streaming: false }
+    case 'turn_done': {
+      if (!msg.usage) return { ...view, streaming: false }
+      const idx = view.messages.length - 1
+      const last = view.messages[idx]
+      if (!last || last.role !== 'assistant') return { ...view, streaming: false }
+      const messages = [...view.messages]
+      messages[idx] = { ...last, usage: msg.usage }
+      return { ...view, streaming: false, messages }
+    }
     case 'error':
       // Always surface errors as their own message so failures before the
       // first assistant token are visible and never misattributed to a
@@ -112,7 +120,7 @@ function historyToView(messages: StoredMessage[]): ChatView {
         else if (b.type === 'error') errors.push(b.message)
         // tool_result blocks are ignored for render
       }
-      if (text !== '' || tools.length > 0) ui.push({ role: 'assistant', text, tools })
+      if (text !== '' || tools.length > 0) ui.push({ role: 'assistant', text, tools, ...(m.usage ? { usage: m.usage } : {}) })
       for (const e of errors) ui.push({ role: 'error', text: e })
     }
   }
