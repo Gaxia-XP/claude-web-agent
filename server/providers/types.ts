@@ -1,6 +1,18 @@
 import type { ToolCall, Usage, StoredMessage } from '../../shared/protocol'
 import type { PermissionResolver } from '../permission'
 
+// Thrown by HTTP-based providers so the retry layer can classify transient (5xx/429) failures
+// by status without parsing message strings.
+export class ProviderHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ProviderHttpError'
+  }
+}
+
 export interface ProviderContext {
   onDelta(text: string): void
   onToolCall(call: ToolCall): void

@@ -1,5 +1,6 @@
 import type { Usage } from '../../shared/protocol'
 import type { Provider, ProviderContext, TurnParams, TurnResult } from './types'
+import { ProviderHttpError } from './types'
 import { historyToChatMessages, type ChatMessage } from './messages'
 
 export type FetchLike = (
@@ -65,7 +66,7 @@ export class OpenAICompatibleProvider implements Provider {
         body: JSON.stringify({ model, messages, stream: true }),
         signal: ctx.signal,
       })
-      if (!res.ok) throw new Error(`OpenAI-compatible request failed: HTTP ${res.status}`)
+      if (!res.ok) throw new ProviderHttpError(res.status, `OpenAI-compatible request failed: HTTP ${res.status}`)
       if (!res.body) throw new Error('OpenAI-compatible response had no body')
       for await (const data of parseSseData(res.body)) {
         if (ctx.signal.aborted) break
