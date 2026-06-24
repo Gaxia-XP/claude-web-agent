@@ -24,17 +24,26 @@ export type AnthropicStreamFn = (
   opts: { signal: AbortSignal },
 ) => AsyncIterable<AnthropicStreamEvent>
 
+// Build the Anthropic SDK client, optionally pointed at an Anthropic-compatible gateway when a
+// non-empty baseUrl is given (e.g. a self-hosted proxy or a reseller that speaks `/v1/messages`).
+// The SDK appends `/v1/messages` to baseURL. A blank/undefined baseUrl keeps the SDK default
+// (https://api.anthropic.com).
+export function makeAnthropicClient(opts: { apiKey: string; baseUrl?: string }): Anthropic {
+  const baseURL = opts.baseUrl?.trim()
+  return new Anthropic({ apiKey: opts.apiKey, ...(baseURL ? { baseURL } : {}) })
+}
+
 export class AnthropicApiProvider implements Provider {
   readonly type = 'anthropic-api'
   private defaultModel: string
   private streamFn: AnthropicStreamFn
 
-  constructor(opts: { apiKey: string; defaultModel: string; streamFn?: AnthropicStreamFn }) {
+  constructor(opts: { apiKey: string; defaultModel: string; baseUrl?: string; streamFn?: AnthropicStreamFn }) {
     this.defaultModel = opts.defaultModel
     if (opts.streamFn) {
       this.streamFn = opts.streamFn
     } else {
-      const client = new Anthropic({ apiKey: opts.apiKey })
+      const client = makeAnthropicClient({ apiKey: opts.apiKey, baseUrl: opts.baseUrl })
       // The SDK's MessageStream is AsyncIterable over raw stream events.
       this.streamFn = (body, o) =>
         client.messages.stream(body as never, { signal: o.signal }) as unknown as AsyncIterable<AnthropicStreamEvent>

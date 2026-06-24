@@ -144,6 +144,7 @@ export function Settings({
   }
 
   const isOpenai = form.providerType === 'openai-compatible'
+  const isAnthropic = form.providerType === 'anthropic-api'
 
   return (
     <div className="flex h-full flex-1 flex-col bg-gray-50">
@@ -235,12 +236,14 @@ export function Settings({
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
 
-            {isOpenai && (
+            {(isOpenai || isAnthropic) && (
               <>
-                <label className="text-sm font-medium text-gray-700">Base URL</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Base URL{isAnthropic ? ' (เว้นว่าง = Anthropic ปกติ)' : ''}
+                </label>
                 <input
                   className="w-full rounded-lg border px-3 py-2 font-mono text-sm"
-                  placeholder="https://openrouter.ai/api/v1"
+                  placeholder={isOpenai ? 'https://openrouter.ai/api/v1' : 'https://api.anthropic.com'}
                   value={form.baseUrl ?? ''}
                   onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value || undefined }))}
                 />
