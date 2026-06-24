@@ -60,7 +60,10 @@ export async function sendWithRetry(
       const canRetry = attempt < maxRetries && !opts.getEmitted() && !opts.signal.aborted && isTransientError(err)
       if (!canRetry) throw err
       await sleep(1000 * 2 ** attempt, opts.signal)
-      if (opts.signal.aborted) throw err
+      // Aborted during backoff = a user interrupt or the turn timeout. Nothing has streamed yet
+      // (retry only runs while getEmitted() is false), so settle like the existing interrupt path —
+      // return an empty result — instead of surfacing the transient error as a failure bubble.
+      if (opts.signal.aborted) return { text: '' }
     }
   }
 }

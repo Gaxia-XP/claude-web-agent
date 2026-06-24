@@ -76,7 +76,7 @@ describe('sendWithRetry', () => {
     ).rejects.toMatchObject({ status: 503 })
     expect(calls).toBe(4) // 1 initial + 3 retries
   })
-  it('stops retrying when the signal aborts during backoff', async () => {
+  it('settles cleanly without an error when the signal aborts during backoff (interrupt/settle path)', async () => {
     const ac = new AbortController()
     let calls = 0
     const p = provider(async () => {
@@ -86,9 +86,8 @@ describe('sendWithRetry', () => {
     const sleep = async () => {
       ac.abort()
     }
-    await expect(
-      sendWithRetry(p, {} as never, ctx(), { getEmitted: () => false, signal: ac.signal, sleep }),
-    ).rejects.toMatchObject({ status: 503 })
+    const result = await sendWithRetry(p, {} as never, ctx(), { getEmitted: () => false, signal: ac.signal, sleep })
+    expect(result).toEqual({ text: '' })
     expect(calls).toBe(1)
   })
 })
