@@ -127,4 +127,9 @@ describe('makeAnthropicClient', () => {
   it('ignores an empty/blank base URL (keeps the default)', () => {
     expect(makeAnthropicClient({ apiKey: 'sk', baseUrl: '' }).baseURL).toBe('https://api.anthropic.com')
   })
+  it('strips a trailing slash so the SDK does not build a double-slash path', () => {
+    expect(makeAnthropicClient({ apiKey: 'sk', baseUrl: 'https://api.maxplus-ai.cc/' }).baseURL).toBe(
+      'https://api.maxplus-ai.cc',
+    )
+  })
 })
