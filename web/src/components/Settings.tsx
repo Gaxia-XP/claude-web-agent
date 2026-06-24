@@ -53,6 +53,7 @@ export function Settings({
   const [qrBase, setQrBase] = useState<string>(() => defaultQrBase(origin, []))
   const [modelIds, setModelIds] = useState<string[] | null>(null)
   const [modelError, setModelError] = useState<string | null>(null)
+  const [usage, setUsage] = useState<{ inputTokens: number; outputTokens: number } | null>(null)
 
   // Pull the server's LAN urls so a QR opened on the server box (origin = localhost) can point at a
   // LAN ip a phone can actually reach. Default the chosen base to the best reachable address; the
@@ -108,6 +109,21 @@ export function Settings({
         if (!alive) return
         setModelIds(null)
         setModelError('โหลดรายการ model ไม่ได้')
+      })
+    return () => {
+      alive = false
+    }
+  }, [token])
+
+  useEffect(() => {
+    let alive = true
+    apiFetch('/api/usage', token)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('http ' + res.status))))
+      .then((body: { inputTokens?: number; outputTokens?: number }) => {
+        if (alive) setUsage({ inputTokens: body.inputTokens ?? 0, outputTokens: body.outputTokens ?? 0 })
+      })
+      .catch(() => {
+        if (alive) setUsage(null)
       })
     return () => {
       alive = false
@@ -404,6 +420,18 @@ export function Settings({
               <div className="font-mono">ANTHROPIC_BASE_URL = {origin}</div>
               <div className="font-mono">x-api-key = &lt;token&gt;</div>
             </div>
+          </div>
+
+          <div className="rounded-lg border bg-gray-50 p-3">
+            <div className="text-xs font-medium text-gray-500">การใช้ token รวมทั้งหมด</div>
+            {usage ? (
+              <div className="mt-1 font-mono text-sm text-gray-700">
+                ↑ {usage.inputTokens.toLocaleString()} &nbsp; ↓ {usage.outputTokens.toLocaleString()} &nbsp;·&nbsp; รวม{' '}
+                {(usage.inputTokens + usage.outputTokens).toLocaleString()}
+              </div>
+            ) : (
+              <div className="mt-1 text-sm text-gray-500">—</div>
+            )}
           </div>
 
           <button
